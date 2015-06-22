@@ -21,13 +21,13 @@ int socket_connect (char *host)
   {
     if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
     {
-      fprintf(stderr, "Socket error: %s\n", strerror(errno);
+      fprintf(stderr, "Socket error: %s\n", strerror(errno));
       continue;
     }
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
     {
       close(sockfd);
-      fprintf(stderr, "Connnect error: %s\n", strerror(errno);
+      fprintf(stderr, "Connnect error: %s\n", strerror(errno));
       continue;
     }
     break;
@@ -102,7 +102,19 @@ void check_error(int sockfds)
       exit(1);
   }
 }
+
+char *readline (char *buffer, int sockfds)
+{
+  int nbuffer_read = 0;
+  char *end_line;
   
+  nbuffer_read = recv(sockfds, buffer, BUFSIZE, 0);
+  if(nbuffer_read == 0)
+    fprintf(stderr, "Erro %s\n", strerror(errno));
+  end_line = strchr(buffer, '\n'); 
+  return end_line;
+}
+ 
 /*
  * Essa funcao marca o fim do header lendo o buffer até encontrar /r/n/r/n
  * (ou variacoes). O buffer 'e lido e um estado para saber se já foi
@@ -111,154 +123,125 @@ void check_error(int sockfds)
  * escrito no arquivo.
  */
 
-FILE *skip_header (int sockfds, char *buffer, char *flag, char *filename)
+char *skip_header (int sockfds, char *buffer)
 {
-  int rbuffer;
-  int content_size = 0, isline = 0, isheader = 0;
-  char *end_line, *start_line;
-  FILE *fp;
-  
+  int isline = 0;
+  char *filep, *end_line, *start_line;
+    
   check_error(sockfds);
-
-  if (strncmp(flag, "-f", 2) == 0)
-  {
-    fp = fopen(filename, "w");
-    if (fp == NULL)
-    {
-      perror("ERRO:");
-      exit(1);
-    }
-  }
-  else
-  {
-    fp = fopen(filename, "wx");
-    if (fp == NULL)
-    {
-      perror("ERRO:");
-      exit(1);
-    }
-  }
-
-  while (isheader == 0)
-  {
-    rbuffer = recv (sockfds, buffer, BUFSIZE, 0);
-    if (rbuffer < 1)
-    {
-      perror ("ERRO");
-      exit (1);
-    }
-    start_line = buffer;
-
-    /*
-     * Essa condição serve para o caso do final do header estar quebrado pelo
-     * tamanho do buffer.
-     */
-    if ((!(memcmp(start_line, "\r\n", 2)) || !(memcmp(start_line, "\n", 1)))
-         && isline == 1)
-    {
-      content_size = content(&isheader, &isline, start_line, &rbuffer, buffer);
-      fwrite(buffer + (rbuffer - content_size), 1, content_size, fp);
-      isheader = 1;
-      return fp;
-    }
-    else
-    {
-      isline = 0;
-    }
+  
+  
     /*
      * Esse loop procura por novas linhas e desloca o ponteiro para o caractere
      * seguinte, procurando em seguida pelo fim do header (nova linha ou carrier
      * seguido de linha.
      */
-    while ((end_line = index(start_line, '\n')) != NULL)
+    while (buffer != NULL)
     {
-      start_line = end_line + 1;
-      isline = 1;
-      if ((!(memcmp(start_line, "\r\n", 2))) ||
-          (!(memcmp(start_line, "\n", 1))))
-      {
-        content_size = content(&isheader, &isline, start_line, &rbuffer,
-                               buffer);
-        fwrite(buffer + (rbuffer - content_size), 1, content_size, fp);
-        isheader = 1;
-        return fp;
-      }
+      buffer = readline(buffer, sockfds);
+      if(buffer + 1 == "\n" || (buffer + 1 == "\r" && buffer + 2 == "\n"))        
+        return buffer;
+      
     }
-  }
+  
 return 0;
 }
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
-void send_get(char *path, char *host, int sockfd)
+int send_get(char *path, char *host, int sockfd)
 {
-  char get_url[1000];
+  char get_url[1024];
 
   if (snprintf(get_url, sizeof(get_url),
         "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", path, host) < 0)
   {
-    printf("URL maior que o buffer");
-    exit(1);
+    fprintf(stderr, "URL maior que o buffer\n");
+    return -1;
   }
 
   if (send(sockfd, get_url, strlen(get_url), 0) < 0)
   {
-    perror("ERRO NO SEND:");
-    exit (1);
+    fprintf(stderr, "Send error:%s\n", strerror(errno));
+    return -1;
   }
+return 0;  
 }
+
 /* Essa funcao cria o arquivo e escreve o buffer recebido dentro dele. */
 int get_file(char *path, char *host, char *filename, char *flag, int sockfd)
 {
-  int recv_data;
-  char buffer[BUFSIZE];
+  int recv_data, buf_content_size;
+  char *filep, *buf_content, buffer[BUFSIZE];
   FILE *fp;
 
-  send_get(path, host, sockfd);
-  memset(buffer, 0, sizeof (buffer) );
-  fp = skip_header(sockfd, buffer, flag, filename);
-  recv_data = recv(sockfd, buffer, BUFSIZE, 0);
-  if (recv_data == -1)
-  {
-    fprintf(stderr, "Recv error: %s\n", strerror(errno);
+  if(send_get(path, host, sockfd) == -1);
     return -1;
-  }
-
-  while (recv_data > 0)
+    
+  if(strcmp(flag, "-f") == 0)
+    filep = "w";
+  else
+    filep = "wx";
+  
+  fp = fopen(filename, filep);
+  if(fp == NULL)
   {
+    fprintf(stderr, "File error:%s\n", strerror(errno));
+    return -1; 
+  }
+  
+  memset(buffer, 0, sizeof (buffer) );
+  buf_content_size = skip_header(sockfd, &buffer);
+
+  do{
     fwrite(buffer, 1, recv_data, fp);
     recv_data = recv(sockfd, buffer, BUFSIZE, 0);
     if (recv_data == -1)
     {
-      fprintf(stderr, "Recv error: %s\n", strerror(errno);
+      fprintf(stderr, "Recv error: %s\n", strerror(errno));
       return -1;
     }
-  }
+  }while(recv_data > 0);
+  
   fclose(fp);
 }
 
-int main (int argc, char *argv[])
+int parse_param(int argc, char *url, char *flag, char **uri)
 {
-  char *uri, *path = NULL, *host = NULL, *filename = NULL;
-  int sockfdm = -1, uri_size = 0;
-  
+  int uri_size = 0;
+
   if(argc > 3)
   {
     fprintf(stderr, "Bad parameters\n");
     return -1;
   }
-  uri_size = strlen(argv[1]);
-  uri = (char *)calloc(uri_size + 1, sizeof(char));
-  if(uri == NULL)
+
+  uri_size = strlen(url);
+  *uri = (char *)calloc(uri_size + 1, sizeof(char));
+  if(*uri == NULL)
   {
-    fprintf(stderr, "Memory error: %s\n", strerror(errno);
-    goto error;   
+    fprintf(stderr, "Memory error: %s\n", strerror(errno));
+    return -1;   
   }
-  strncpy(uri, argv[1], uri_size);
-     
+       
   /* Removendo http:// da URI */
-  if(memcmp(uri, "http://", 7) == 0)
-    strncpy(uri, argv[1] + 7, uri_size - 6);
+  if(memcmp(url, "http://", 7) == 0)
+    strncpy(*uri, url + 7, uri_size - 6);
   else
-    strncpy(uri, argv[1], uri_size);
+    strncpy(*uri, url, uri_size);
+
+return uri_size;
+}
+
+int main (int argc, char *argv[])
+{
+  char *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
+  int sockfdm = -1, uri_size = 0;
+  
+
+  uri_size = parse_param(argc, argv[1], argv[2], &uri);
+  if(uri_size ==  -1)
+    goto error;
+  
+  if(get_host(uri, &host, &path
 
   if (strchr(uri, '/') != NULL)
   {
@@ -266,7 +249,7 @@ int main (int argc, char *argv[])
     host = (char *)calloc(uri_size - strlen(path) + 1, sizeof(char));
     if(host == NULL)
     {
-      fprintf(stderr, "Memory error: %s\n", strerror(errno);
+      fprintf(stderr, "Memory error: %s\n", strerror(errno));
       goto error; 
     }
     memcpy(host, uri, uri_size - strlen(path) - 1);     
@@ -292,7 +275,7 @@ int main (int argc, char *argv[])
     free(uri);
     free(host);
     return -1;
- 
+
 }
 
 
