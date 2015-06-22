@@ -50,7 +50,7 @@ int content (int *isheader, int *isline, char *start_line, int *rbuffer,
  * request
  */
 
-void check_error(int sockfds)
+int check_http_errors(int sockfds)
 {
   int rbuffer;
   char http_msg[1], buf_aux[10];
@@ -101,50 +101,47 @@ void check_error(int sockfds)
       printf("Header error\n");
       exit(1);
   }
+  return 0;
 }
 
-char *readline (char *buffer, int sockfds)
+char *readline (char *start_line)
 {
-  int nbuffer_read = 0;
   char *end_line;
-  
-  nbuffer_read = recv(sockfds, buffer, BUFSIZE, 0);
-  if(nbuffer_read == 0)
-    fprintf(stderr, "Erro %s\n", strerror(errno));
-  end_line = strchr(buffer, '\n'); 
-  return end_line;
+
+  end_line = strchr(start_line, '\n');
+  return line;
+
+  while(buffer[i] != '\n')
+  {
+   x =  buffer[i]
+  }
 }
  
-/*
- * Essa funcao marca o fim do header lendo o buffer até encontrar /r/n/r/n
- * (ou variacoes). O buffer 'e lido e um estado para saber se já foi
- * encontrada uma linha 'e mantido para caso a condicao para fim do header
- * esteja separada entre buffers. O conteudo do buffer alem do header e
- * escrito no arquivo.
- */
-
-char *skip_header (int sockfds, char *buffer)
+int find_header_end(char *buffer, int sockfds)
 {
-  int isline = 0;
-  char *filep, *end_line, *start_line;
-    
-  check_error(sockfds);
-  
-  
-    /*
-     * Esse loop procura por novas linhas e desloca o ponteiro para o caractere
-     * seguinte, procurando em seguida pelo fim do header (nova linha ou carrier
-     * seguido de linha.
-     */
-    while (buffer != NULL)
+  int nbuffer_read, isline = 0;
+  char *end_line, *start_line;
+  start_line = buffer;  
+    while(1)
     {
-      buffer = readline(buffer, sockfds);
-      if(buffer + 1 == "\n" || (buffer + 1 == "\r" && buffer + 2 == "\n"))        
-        return buffer;
-      
-    }
-  
-return 0;
+      nbuffer_read = recv(sockfds, buffer, BUFSIZE, 0);
+      readline(buffer);
+      if(nbuffer_read == 0)
+      {
+        fprintf(stderr,"Recv error:%s\n", strerror(errno));
+        break;
+      }
+      while(end_line != NULL)
+      {
+        end_line = readline(start_line, &isline);
+        start_line = end_line + 1;
+        if(memcmp(start_line, "\n", 1) == 0)
+          return strlen(start_line) - 1;
+        if (memcmp(start_line, "\r\n", 2) == 0 )        
+          return strlen(start_line) - 2; 
+      }
+    }  
+return -1;
 }
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
 int send_get(char *path, char *host, int sockfd)
@@ -166,30 +163,14 @@ int send_get(char *path, char *host, int sockfd)
 return 0;  
 }
 
-/* Essa funcao cria o arquivo e escreve o buffer recebido dentro dele. */
-int get_file(char *path, char *host, char *filename, char *flag, int sockfd)
+/* Essa funcao escreve o buffer recebido dentro dele. */
+int get_file(char *path, char *host, FILE *fp, char *filename, int sockfd)
 {
   int recv_data, buf_content_size;
-  char *filep, *buf_content, buffer[BUFSIZE];
-  FILE *fp;
-
-  if(send_get(path, host, sockfd) == -1);
-    return -1;
-    
-  if(strcmp(flag, "-f") == 0)
-    filep = "w";
-  else
-    filep = "wx";
-  
-  fp = fopen(filename, filep);
-  if(fp == NULL)
-  {
-    fprintf(stderr, "File error:%s\n", strerror(errno));
-    return -1; 
-  }
+  char *buf_content, buffer[BUFSIZE];
   
   memset(buffer, 0, sizeof (buffer) );
-  buf_content_size = skip_header(sockfd, &buffer);
+  //buf_content_size = skip_header(sockfd, &buffer);
 
   do{
     fwrite(buffer, 1, recv_data, fp);
@@ -202,9 +183,10 @@ int get_file(char *path, char *host, char *filename, char *flag, int sockfd)
   }while(recv_data > 0);
   
   fclose(fp);
+  return 0;
 }
 
-int parse_param(int argc, char *url, char *flag, char **uri)
+static int parse_param(int argc, char *url, char *flag, char **uri)
 {
   int uri_size = 0;
 
@@ -228,54 +210,92 @@ int parse_param(int argc, char *url, char *flag, char **uri)
   else
     strncpy(*uri, url, uri_size);
 
-return uri_size;
+  return uri_size;
 }
 
-int main (int argc, char *argv[])
+static int get_names(char *uri, int uri_size, char **host, char **path, char **filename)
 {
-  char *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
-  int sockfdm = -1, uri_size = 0;
-  
-
-  uri_size = parse_param(argc, argv[1], argv[2], &uri);
-  if(uri_size ==  -1)
-    goto error;
-  
-  if(get_host(uri, &host, &path
-
   if (strchr(uri, '/') != NULL)
   {
-    path = strchr(uri, '/') + 1;
-    host = (char *)calloc(uri_size - strlen(path) + 1, sizeof(char));
-    if(host == NULL)
+    *path = strchr(uri, '/') + 1;
+    *host = (char *)calloc(uri_size - strlen(*path) + 1, sizeof(char));
+    if(*host == NULL)
     {
       fprintf(stderr, "Memory error: %s\n", strerror(errno));
-      goto error; 
+      return -1; 
     }
-    memcpy(host, uri, uri_size - strlen(path) - 1);     
-    filename = strrchr(uri, '/') + 1;
+    memcpy(*host, uri, uri_size - strlen(*path) - 1);     
+    *filename = strrchr(uri, '/') + 1;
   }
   else
   {
     fprintf(stderr, "Bad URL\n");
-    goto error;
+    return -1;
   }
+  return 0;
+}
+
+int open_file(FILE *fp, char *filename, char *flag)
+{
+  char *filep;
+
+  if(strcmp(flag, "-f") == 0)
+    filep = "w";
+  else
+    filep = "wx";
+  
+  fp = fopen(filename, filep);
+  if(fp == NULL)
+  {
+    fprintf(stderr, "File error:%s\n", strerror(errno));
+    return -1; 
+  }
+return 0;
+}
+
+int main (int argc, char *argv[])
+{
+  char buffer[BUFSIZE], *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
+  int nbuffer_read = 0, sockfdm = -1, uri_size = 0;
+  FILE *fp = NULL;
+  
+  memset(buffer, 0, sizeof(buffer));
+  
+  uri_size = parse_param(argc, argv[1], argv[2], &uri);
+  if(uri_size ==  -1)
+    goto error;
+  
+  if(get_names(uri, uri_size, &host, &path, &filename) == -1)
+    goto error;
+  
+  if(open_file(fp, filename,argv[2]) == -1)
+    goto error;
 
   sockfdm = socket_connect(host);
-
   if (sockfdm > 0)
-    get_file(path, host, filename, argv[2], sockfdm);
+    if(send_get(path, host, sockfdm) == -1)
+      goto error;
+  
+  if(check_http_errors(sockfdm) == -1)
+    goto error;
+  
+  nbuffer_read = find_header_end(&buffer,sockfdm);
+  if(get_file(path, host, fp, filename, sockfdm));
   
   free(uri);
   free(host);
   close(sockfdm);
   return 0;
-
-  error:    
+      
+  error:
+    if(sockfdm)
+      close(sockfdm);
+    if(fp)
+      if(remove(filename) != 0)
+        fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
     free(uri);
     free(host);
     return -1;
-
 }
 
 
