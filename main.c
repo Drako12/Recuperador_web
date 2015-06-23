@@ -104,17 +104,19 @@ int check_http_errors(int sockfds)
   return 0;
 }
 
-char *readline (char *start_line)
+char *get_until (char *start_line)
 {
   char *end_line;
-
+  int str_index, buf_len;  
   end_line = strchr(start_line, '\n');
-  return line;
+  str_index = end_line - start_line;
+  buf_len = strnlen(end_line, str_index);
+  char *buf_tmp = (char*)calloc(strlen(buf_len) + 1, sizeof(char)); 
+  memcpy(buf_tmp, start_line, buf_len);
+  start_line = end_line + 1;
 
-  while(buffer[i] != '\n')
-  {
-   x =  buffer[i]
-  }
+  return buf_tmp;
+
 }
  
 int find_header_end(char *buffer, int sockfds)
@@ -122,8 +124,9 @@ int find_header_end(char *buffer, int sockfds)
   int nbuffer_read, isline = 0;
   char *end_line, *start_line;
   start_line = buffer;  
-    while(1)
-    {
+   
+  while(1)
+  {
       nbuffer_read = recv(sockfds, buffer, BUFSIZE, 0);
       readline(buffer);
       if(nbuffer_read == 0)
@@ -140,7 +143,7 @@ int find_header_end(char *buffer, int sockfds)
         if (memcmp(start_line, "\r\n", 2) == 0 )        
           return strlen(start_line) - 2; 
       }
-    }  
+   }  
 return -1;
 }
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
