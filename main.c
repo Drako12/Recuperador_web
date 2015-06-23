@@ -1,5 +1,73 @@
 #include "network.h"
 
+static int parse_param(int argc, char *url, char *flag, char **uri)
+{
+  int uri_size = 0;
+
+  if (argc > 3)
+  {
+    fprintf(stderr, "Bad parameters\n");
+    return -1;
+  }
+
+  uri_size = strlen(url);
+  *uri = (char *) calloc(uri_size + 1, sizeof(char));
+  if (*uri == NULL)
+  {
+    fprintf(stderr, "Memory error: %s\n", strerror(errno));
+    return -1;   
+  }
+       
+  /* Removendo http:// da URI */
+  if (memcmp(url, "http://", 7) == 0)
+    strncpy(*uri, url + 7, uri_size - 6);
+  else
+    strncpy(*uri, url, uri_size);
+
+  return uri_size;
+}
+
+static int get_names(char *uri, int uri_size, char **host, char **path,
+                     char **filename)
+{
+  if (strchr(uri, '/') != NULL)
+  {
+    *path = strchr(uri, '/') + 1;
+    *host = (char *) calloc(uri_size - strlen(*path) + 1, sizeof(char));
+    if (*host == NULL)
+    {
+      fprintf(stderr, "Memory error: %s\n", strerror(errno));
+      return -1; 
+    }
+    memcpy(*host, uri, uri_size - strlen(*path) - 1);     
+    *filename = strrchr(uri, '/') + 1;
+  }
+  else
+  {
+    fprintf(stderr, "Bad URL\n");
+    return -1;
+  }
+  return 0;
+}
+
+int open_file(FILE **fp, char *filename, char *flag)
+{
+  char *filep;
+
+  if (strcmp(flag, "-f") == 0)
+    filep = "w";
+  else
+    filep = "wx";
+  
+  *fp = fopen(filename, filep);
+  if (*fp == NULL)
+  {
+    fprintf(stderr, "File error:%s\n", strerror(errno));
+    return -1; 
+  }
+  return 0;
+}
+
 int socket_connect (char *host)
 {
   int sockfd = -1, rv;
@@ -12,7 +80,6 @@ int socket_connect (char *host)
   if ((rv = getaddrinfo(host, "http", &hints, &servinfo)) != 0)
   {
     fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (rv) );
-    perror("Error");
     freeaddrinfo(servinfo);
     return -1;
   }
@@ -36,116 +103,6 @@ int socket_connect (char *host)
   return sockfd;
 }
 
-int content (int *isheader, int *isline, char *start_line, int *rbuffer,
-    char *buffer)
-{
-  *isheader = 1;
-  *isline = 2;
-  if (start_line[0] != '\n')
-    start_line += 1;
-  start_line += 1;
-  return *rbuffer - (start_line - buffer);
-}
-/* Essa funcao checa pelas mensagems de erro do status http recebido apos o
- * request
- */
-
-int check_http_errors(int sockfds)
-{
-  int rbuffer;
-  char http_msg[1], buf_aux[10];
-
-  rbuffer = recv(sockfds, buf_aux, 10, 0);
-  if (rbuffer < 1)
-  {
-    perror ("ERRO");
-    exit (1);
-  }
-  /* Grava o primeiro digito da mensagem de status http */
-  http_msg[0] = buf_aux[9];
-  switch (http_msg[0])
-  {
-    case '2':
-      break;
-  
-    case '3':
-      printf("3");
-      while(http_msg[0] != '\n')
-      {
-        recv(sockfds, http_msg, 1 , 0);
-        printf("%c", http_msg[0]);
-      }     
-      exit(1);
- 
-    case '4':   
-      printf("4");
-      while(http_msg[0] != '\n')
-      {
-        recv(sockfds, http_msg, 1 , 0);
-        printf("%c", http_msg[0]);
-      }
-      //if(buf_aux[11] == '0')
-      // printf("Error 400, Bad Request\n");
-      exit(1);
-
-    case '5':
-      printf("5");
-      while(http_msg[0] != '\n')
-      {
-        recv(sockfds, http_msg, 1 , 0);
-        printf("%c", http_msg[0]);
-      }
-      exit(1);
-
-    default:
-      printf("Header error\n");
-      exit(1);
-  }
-  return 0;
-}
-
-char *get_until (char *start_line)
-{
-  char *end_line;
-  int str_index, buf_len;  
-  end_line = strchr(start_line, '\n');
-  str_index = end_line - start_line;
-  buf_len = strnlen(end_line, str_index);
-  char *buf_tmp = (char*)calloc(strlen(buf_len) + 1, sizeof(char)); 
-  memcpy(buf_tmp, start_line, buf_len);
-  start_line = end_line + 1;
-
-  return buf_tmp;
-
-}
- 
-int find_header_end(char *buffer, int sockfds)
-{
-  int nbuffer_read, isline = 0;
-  char *end_line, *start_line;
-  start_line = buffer;  
-   
-  while(1)
-  {
-      nbuffer_read = recv(sockfds, buffer, BUFSIZE, 0);
-      readline(buffer);
-      if(nbuffer_read == 0)
-      {
-        fprintf(stderr,"Recv error:%s\n", strerror(errno));
-        break;
-      }
-      while(end_line != NULL)
-      {
-        end_line = readline(start_line, &isline);
-        start_line = end_line + 1;
-        if(memcmp(start_line, "\n", 1) == 0)
-          return strlen(start_line) - 1;
-        if (memcmp(start_line, "\r\n", 2) == 0 )        
-          return strlen(start_line) - 2; 
-      }
-   }  
-return -1;
-}
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
 int send_get(char *path, char *host, int sockfd)
 {
@@ -166,124 +123,123 @@ int send_get(char *path, char *host, int sockfd)
 return 0;  
 }
 
+char *get_line_or_chr (char **start_line)
+{
+  char *end_line, *buf_tmp;
+  int buf_len;  
+  
+  end_line = strchr(*start_line, '\n');
+  if(end_line != NULL)
+  {
+    buf_len = end_line - *start_line;  
+    buf_tmp = (char*)calloc(buf_len + 1, sizeof(char));
+    memcpy(buf_tmp, *start_line, buf_len);
+    *start_line = end_line + 1;
+    return buf_tmp;
+  }
+  else
+  {
+   buf_tmp = (char*)calloc(2, sizeof(char));
+   memcpy(buf_tmp, *start_line, 1);
+   *start_line = *start_line + 1;
+   return buf_tmp;
+  }
+
+}
+/* 
+static int check_http_errors(int sockfds, char **buffer)
+{
+  char *buf_tmp;
+   
+  buf_tmp = get_line_or_chr(buffer);
+    
+  if(buf_tmp[9] != '2')
+  {
+    fprintf(stderr, "%s", buf_tmp);
+    free(buf_tmp);
+    return -1;
+  }
+  free(buf_tmp);
+  return 0;
+}*/
+
+static int check_header(char **buffer, int sockfds)
+{
+  int nbuffer_read = 0;
+  char *buf_tmp = NULL;      
+  char *pbuf_start;   
+
+  nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
+  pbuf_start = *buffer;
+ 
+  //if (check_http_errors(sockfds, buffer, header) == -1)
+  //  return -1;
+  
+  buf_tmp = get_line_or_chr(buffer);
+  while (memcmp(buf_tmp,"\r", 1) != 0 && memcmp(buf_tmp, "", 1) != 0)
+  {
+    if (strlen(buf_tmp) == 1)
+    {
+      nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
+      pbuf_start = *buffer;
+    }
+    buf_tmp =  get_line_or_chr(buffer);
+  } 
+
+  free(buf_tmp);
+  return nbuffer_read - (*buffer - pbuf_start);
+}
+
+
 /* Essa funcao escreve o buffer recebido dentro dele. */
-int get_file(char *path, char *host, FILE *fp, char *filename, int sockfd)
-{
-  int recv_data, buf_content_size;
-  char *buf_content, buffer[BUFSIZE];
-  
-  memset(buffer, 0, sizeof (buffer) );
-  //buf_content_size = skip_header(sockfd, &buffer);
-
-  do{
-    fwrite(buffer, 1, recv_data, fp);
-    recv_data = recv(sockfd, buffer, BUFSIZE, 0);
-    if (recv_data == -1)
+int get_file(char **buffer, int nbuffer_left, FILE **fp, char *filename,
+             int sockfd)
+{ 
+  int recv_data = 0;
+  do
+  {
+    fwrite(*buffer, 1, recv_data + nbuffer_left, *fp);
+    nbuffer_left = 0;
+    recv_data = recv(sockfd, *buffer, BUFSIZE, 0);
+    if (recv_data < 0)
     {
-      fprintf(stderr, "Recv error: %s\n", strerror(errno));
+      fprintf(stderr,"Recv error:%s\n", strerror(errno));
       return -1;
-    }
-  }while(recv_data > 0);
+    }        
+  } while (recv_data > 0);
   
-  fclose(fp);
+  fclose(*fp);
   return 0;
 }
 
-static int parse_param(int argc, char *url, char *flag, char **uri)
+int main(int argc, char *argv[])
 {
-  int uri_size = 0;
-
-  if(argc > 3)
-  {
-    fprintf(stderr, "Bad parameters\n");
-    return -1;
-  }
-
-  uri_size = strlen(url);
-  *uri = (char *)calloc(uri_size + 1, sizeof(char));
-  if(*uri == NULL)
-  {
-    fprintf(stderr, "Memory error: %s\n", strerror(errno));
-    return -1;   
-  }
-       
-  /* Removendo http:// da URI */
-  if(memcmp(url, "http://", 7) == 0)
-    strncpy(*uri, url + 7, uri_size - 6);
-  else
-    strncpy(*uri, url, uri_size);
-
-  return uri_size;
-}
-
-static int get_names(char *uri, int uri_size, char **host, char **path, char **filename)
-{
-  if (strchr(uri, '/') != NULL)
-  {
-    *path = strchr(uri, '/') + 1;
-    *host = (char *)calloc(uri_size - strlen(*path) + 1, sizeof(char));
-    if(*host == NULL)
-    {
-      fprintf(stderr, "Memory error: %s\n", strerror(errno));
-      return -1; 
-    }
-    memcpy(*host, uri, uri_size - strlen(*path) - 1);     
-    *filename = strrchr(uri, '/') + 1;
-  }
-  else
-  {
-    fprintf(stderr, "Bad URL\n");
-    return -1;
-  }
-  return 0;
-}
-
-int open_file(FILE *fp, char *filename, char *flag)
-{
-  char *filep;
-
-  if(strcmp(flag, "-f") == 0)
-    filep = "w";
-  else
-    filep = "wx";
-  
-  fp = fopen(filename, filep);
-  if(fp == NULL)
-  {
-    fprintf(stderr, "File error:%s\n", strerror(errno));
-    return -1; 
-  }
-return 0;
-}
-
-int main (int argc, char *argv[])
-{
-  char buffer[BUFSIZE], *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
-  int nbuffer_read = 0, sockfdm = -1, uri_size = 0;
+  char *buffer, *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
+  int nbuffer_left = 0, sockfdm = -1, uri_size = 0;
   FILE *fp = NULL;
   
-  memset(buffer, 0, sizeof(buffer));
-  
+  buffer = (char *)calloc(BUFSIZE, sizeof(char));
+   
   uri_size = parse_param(argc, argv[1], argv[2], &uri);
-  if(uri_size ==  -1)
+  if (uri_size ==  -1)
     goto error;
   
-  if(get_names(uri, uri_size, &host, &path, &filename) == -1)
+  if (get_names(uri, uri_size, &host, &path, &filename) == -1)
     goto error;
   
-  if(open_file(fp, filename,argv[2]) == -1)
+  if (open_file(&fp, filename,argv[2]) == -1)
     goto error;
 
   sockfdm = socket_connect(host);
   if (sockfdm > 0)
-    if(send_get(path, host, sockfdm) == -1)
+    if (send_get(path, host, sockfdm) == -1)
       goto error;
   
-  if(check_http_errors(sockfdm) == -1)
+  nbuffer_left = check_header(&buffer,sockfdm);
+  if (nbuffer_left == -1)
     goto error;
-  
-  nbuffer_read = find_header_end(&buffer,sockfdm);
-  if(get_file(path, host, fp, filename, sockfdm));
+
+  if (get_file(&buffer, nbuffer_left, &fp, filename, sockfdm));
   
   free(uri);
   free(host);
@@ -291,10 +247,10 @@ int main (int argc, char *argv[])
   return 0;
       
   error:
-    if(sockfdm)
+    if (sockfdm)
       close(sockfdm);
-    if(fp)
-      if(remove(filename) != 0)
+    if (fp)
+      if (remove(filename) != 0)
         fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
     free(uri);
     free(host);
