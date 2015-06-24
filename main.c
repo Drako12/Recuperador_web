@@ -122,11 +122,10 @@ int get_line(char *buffer, char *buf_tmp)
     pbuffer = end_line + 1;
     return buf_len;
   }
-  else
-  {
-    fprintf(stderr,"Header error");
-    return -1;    
-  }
+  
+  fprintf(stderr,"Header error");
+  return -1;    
+  
 }
 
 static int check_http_errors(char *header)
