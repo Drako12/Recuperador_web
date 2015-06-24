@@ -1,6 +1,6 @@
 #include "network.h"
 
-static int parse_param(int argc, char *url, char *flag, char **uri)
+static int parse_param(int argc, char *url, char **uri)
 {
   int uri_size = 0;
 
@@ -20,7 +20,10 @@ static int parse_param(int argc, char *url, char *flag, char **uri)
        
   /* Removendo http:// da URI */
   if (memcmp(url, "http://", 7) == 0)
-    strncpy(*uri, url + 7, uri_size - 6);
+  {
+    uri_size -= 7;
+    strncpy(*uri, url + 7, uri_size);
+  }
   else
     strncpy(*uri, url, uri_size);
 
@@ -32,14 +35,14 @@ static int get_names(char *uri, int uri_size, char **host, char **path,
 {
   if (strchr(uri, '/') != NULL)
   {
-    *path = strchr(uri, '/') + 1;
+    *path = strchr(uri, '/') ;
     *host = (char *) calloc(uri_size - strlen(*path) + 1, sizeof(char));
     if (*host == NULL)
     {
       fprintf(stderr, "Memory error: %s\n", strerror(errno));
       return -1; 
     }
-    memcpy(*host, uri, uri_size - strlen(*path) - 1);     
+    memcpy(*host, uri, uri_size - strlen(*path));     
     *filename = strrchr(uri, '/') + 1;
   }
   else
@@ -54,8 +57,11 @@ int open_file(FILE **fp, char *filename, char *flag)
 {
   char *filep;
 
-  if (strcmp(flag, "-f") == 0)
+  if (flag)
+  { 
+    if (strcmp(flag, "-f") == 0)
     filep = "w";
+  }
   else
     filep = "wx";
   
@@ -123,7 +129,7 @@ int send_get(char *path, char *host, int sockfd)
 return 0;  
 }
 
-char *get_line_or_chr (char **start_line)
+char *get_line_or_str (char **start_line, int *isline)
 {
   char *end_line, *buf_tmp;
   int buf_len;  
@@ -135,55 +141,75 @@ char *get_line_or_chr (char **start_line)
     buf_tmp = (char*)calloc(buf_len + 1, sizeof(char));
     memcpy(buf_tmp, *start_line, buf_len);
     *start_line = end_line + 1;
+    *isline = 1;
     return buf_tmp;
   }
   else
   {
-   buf_tmp = (char*)calloc(2, sizeof(char));
-   memcpy(buf_tmp, *start_line, 1);
-   *start_line = *start_line + 1;
+   buf_tmp = (char*)calloc(BUFSIZE + 1, sizeof(char));
+   memcpy(buf_tmp, *start_line, BUFSIZE);
+   *start_line = *start_line + BUFSIZE;
+   *isline = 0;
    return buf_tmp;
   }
 
 }
-/* 
-static int check_http_errors(int sockfds, char **buffer)
+ 
+static int check_http_errors(int sockfds, char **buffer, int *isline)
 {
-  char *buf_tmp;
+  char buf_tmp[128];
+  char http_status[32];
+  int nbuffer_read, status, ns;
    
-  buf_tmp = get_line_or_chr(buffer);
-    
-  if(buf_tmp[9] != '2')
+  strcpy(buf_tmp, get_line_or_str(buffer, isline));
+  
+  while(isline != 0)   
   {
-    fprintf(stderr, "%s", buf_tmp);
-    free(buf_tmp);
+  nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
+  snprintf(buf_tmp, sizeof(buf_tmp),"%s%s",buf_tmp,
+           get_line_or_str(buffer, isline));   
+  }  
+  ns = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
+  if (ns != 2)
+  {
+    fprintf(stderr, "Header error");
+    //free(buf_tmp);
     return -1;
   }
-  free(buf_tmp);
+  else
+  {
+    if (status < 200 && status > 299)
+      {
+        fprintf(stderr,"Header:%s",http_status);
+        return -1;
+      }
+  }
+  //free(buf_tmp);
   return 0;
-}*/
+}
 
 static int check_header(char **buffer, int sockfds)
 {
-  int nbuffer_read = 0;
+  int isline = 0, nbuffer_read = 0;
   char *buf_tmp = NULL;      
   char *pbuf_start;   
 
   nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
   pbuf_start = *buffer;
  
-  //if (check_http_errors(sockfds, buffer, header) == -1)
-  //  return -1;
+  if (check_http_errors(sockfds, buffer, &isline) == -1)
+    return -1;
   
-  buf_tmp = get_line_or_chr(buffer);
+  buf_tmp = get_line_or_str(buffer, &isline);
   while (memcmp(buf_tmp,"\r", 1) != 0 && memcmp(buf_tmp, "", 1) != 0)
   {
-    if (strlen(buf_tmp) == 1)
+    if (isline == 0)
     {
       nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
       pbuf_start = *buffer;
     }
-    buf_tmp =  get_line_or_chr(buffer);
+   // free(buf_tmp);
+    buf_tmp =  get_line_or_str(buffer, &isline);
   } 
 
   free(buf_tmp);
@@ -220,14 +246,14 @@ int main(int argc, char *argv[])
   
   buffer = (char *)calloc(BUFSIZE, sizeof(char));
    
-  uri_size = parse_param(argc, argv[1], argv[2], &uri);
+  uri_size = parse_param(argc, argv[1], &uri);
   if (uri_size ==  -1)
     goto error;
   
   if (get_names(uri, uri_size, &host, &path, &filename) == -1)
     goto error;
   
-  if (open_file(&fp, filename,argv[2]) == -1)
+  if (open_file(&fp, filename, argv[2]) == -1)
     goto error;
 
   sockfdm = socket_connect(host);
