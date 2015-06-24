@@ -1,49 +1,34 @@
-#include "network.h"
+#include "client.h"
 
-static int parse_param(int argc, char *url, char **uri)
+static int parse_param(int argc, const char *url, struct name *names)
 {
-  int uri_size = 0;
-
+  char *url_s = NULL;
   if (argc > 3)
   {
     fprintf(stderr, "Bad parameters\n");
     return -1;
   }
-
-  uri_size = strlen(url);
-  *uri = (char *) calloc(uri_size + 1, sizeof(char));
-  if (*uri == NULL)
-  {
-    fprintf(stderr, "Memory error: %s\n", strerror(errno));
-    return -1;   
-  }
-       
+  
+  url_s = strdup(url);
+          
   /* Removendo http:// da URI */
-  if (memcmp(url, "http://", 7) == 0)
-  {
-    uri_size -= 7;
-    strncpy(*uri, url + 7, uri_size);
-  }
+  if (memcmp(url_s, "http://", 7) == 0)
+    strncpy(names->uri, url_s + 7, MAXURI);
   else
-    strncpy(*uri, url, uri_size);
-
-  return uri_size;
+    strncpy(names->uri, url_s, MAXURI);
+  
+  free(url_s);
+  return 0;
 }
 
-static int get_names(char *uri, int uri_size, char **host, char **path,
-                     char **filename)
+static int get_names(struct name *names)
 {
-  if (strchr(uri, '/') != NULL)
+  if (strchr(names->uri, '/') != NULL)
   {
-    *path = strchr(uri, '/') ;
-    *host = (char *) calloc(uri_size - strlen(*path) + 1, sizeof(char));
-    if (*host == NULL)
-    {
-      fprintf(stderr, "Memory error: %s\n", strerror(errno));
-      return -1; 
-    }
-    memcpy(*host, uri, uri_size - strlen(*path));     
-    *filename = strrchr(uri, '/') + 1;
+    memcpy(names->path, strchr(names->uri, '/'), MAXPATH);
+    memccpy(names->host, names->uri, '/', MAXHOST);
+    names->host[strlen(names->host) - 1] = '\0';
+    memcpy(names->filename, strrchr(names->uri, '/') + 1, MAXFILE);
   }
   else
   {
@@ -53,7 +38,7 @@ static int get_names(char *uri, int uri_size, char **host, char **path,
   return 0;
 }
 
-int open_file(FILE **fp, char *filename, char *flag)
+FILE *open_file(struct name names, char *flag)
 {
   char *filep;
 
@@ -64,17 +49,11 @@ int open_file(FILE **fp, char *filename, char *flag)
   }
   else
     filep = "wx";
-  
-  *fp = fopen(filename, filep);
-  if (*fp == NULL)
-  {
-    fprintf(stderr, "File error:%s\n", strerror(errno));
-    return -1; 
-  }
-  return 0;
+ 
+  return fopen(names.filename, filep);
 }
 
-int socket_connect (char *host)
+int socket_connect (struct name names)
 {
   int sockfd = -1, rv;
   struct addrinfo hints, *servinfo, *p;
@@ -83,7 +62,7 @@ int socket_connect (char *host)
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  if ((rv = getaddrinfo(host, "http", &hints, &servinfo)) != 0)
+  if ((rv = getaddrinfo(names.host, "http", &hints, &servinfo)) != 0)
   {
     fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (rv) );
     freeaddrinfo(servinfo);
@@ -110,12 +89,12 @@ int socket_connect (char *host)
 }
 
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
-int send_get(char *path, char *host, int sockfd)
+int send_get(struct name names, int sockfd)
 {
   char get_url[1024];
 
   if (snprintf(get_url, sizeof(get_url),
-        "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", path, host) < 0)
+        "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", names.path, names.host) < 0)
   {
     fprintf(stderr, "URL maior que o buffer\n");
     return -1;
@@ -129,158 +108,160 @@ int send_get(char *path, char *host, int sockfd)
 return 0;  
 }
 
-char *get_line_or_str (char **start_line, int *isline)
+int get_line(char *buffer, char *buf_tmp)
 {
-  char *end_line, *buf_tmp;
-  int buf_len;  
+  char *end_line, *pbuffer;
+  int buf_len;
   
-  end_line = strchr(*start_line, '\n');
-  if(end_line != NULL)
+  pbuffer = buffer;
+  end_line = strchr(buffer, '\n');
+  if (end_line != NULL)
   {
-    buf_len = end_line - *start_line;  
-    buf_tmp = (char*)calloc(buf_len + 1, sizeof(char));
-    memcpy(buf_tmp, *start_line, buf_len);
-    *start_line = end_line + 1;
-    *isline = 1;
-    return buf_tmp;
+    buf_len = end_line - pbuffer + 1;
+    memcpy(buf_tmp, buffer, buf_len);
+    pbuffer = end_line + 1;
+    return buf_len;
   }
   else
   {
-   buf_tmp = (char*)calloc(BUFSIZE + 1, sizeof(char));
-   memcpy(buf_tmp, *start_line, BUFSIZE);
-   *start_line = *start_line + BUFSIZE;
-   *isline = 0;
-   return buf_tmp;
+    fprintf(stderr,"Header error");
+    return -1;    
   }
-
 }
- 
-static int check_http_errors(int sockfds, char **buffer, int *isline)
+
+static int check_http_errors(char *header)
 {
-  char buf_tmp[128];
-  char http_status[32];
-  int nbuffer_read, status, ns;
+  char buf_tmp[MAXLINE];
+  char http_status[MAXHTTP_STATUS];
+  int  status = 0, ns = 0;
    
-  strcpy(buf_tmp, get_line_or_str(buffer, isline));
-  
-  while(isline != 0)   
-  {
-  nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
-  snprintf(buf_tmp, sizeof(buf_tmp),"%s%s",buf_tmp,
-           get_line_or_str(buffer, isline));   
-  }  
-  ns = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
-  if (ns != 2)
-  {
-    fprintf(stderr, "Header error");
-    //free(buf_tmp);
-    return -1;
-  }
-  else
-  {
-    if (status < 200 && status > 299)
+  if(get_line(header, buf_tmp) != -1)   
+  {    
+    ns = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
+    if (ns != 2)
+    {
+      fprintf(stderr, "Header error");
+      return -1;
+    }
+    else
+    {
+      if (status < 200 && status > 299)
       {
         fprintf(stderr,"Header:%s",http_status);
         return -1;
       }
+    }
   }
-  //free(buf_tmp);
+  else
+    return -1;
   return 0;
 }
 
-static int check_header(char **buffer, int sockfds)
+int check_header_end(char *header)
 {
-  int isline = 0, nbuffer_read = 0;
-  char *buf_tmp = NULL;      
-  char *pbuf_start;   
-
-  nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
-  pbuf_start = *buffer;
- 
-  if (check_http_errors(sockfds, buffer, &isline) == -1)
-    return -1;
+  int nheader_read = 0;
+  char buf_tmp[BUFSIZE];      
+  char *pheader;   
   
-  buf_tmp = get_line_or_str(buffer, &isline);
-  while (memcmp(buf_tmp,"\r", 1) != 0 && memcmp(buf_tmp, "", 1) != 0)
+  memset(buf_tmp, 0, BUFSIZE);
+  pheader = header;
+  
+  while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
   {
-    if (isline == 0)
-    {
-      nbuffer_read = recv(sockfds, *buffer, BUFSIZE, 0);
-      pbuf_start = *buffer;
-    }
-   // free(buf_tmp);
-    buf_tmp =  get_line_or_str(buffer, &isline);
-  } 
-
-  free(buf_tmp);
-  return nbuffer_read - (*buffer - pbuf_start);
+    memset(buf_tmp, 0, BUFSIZE);
+    nheader_read = get_line(pheader + nheader_read, buf_tmp) +  nheader_read;
+    if(nheader_read == -1)
+      return -1;                              
+  }
+  return nheader_read;
 }
 
+static int get_header(char *header, int sockfds)
+{
+  int nheader_read = 0;
+  int buf_left = HEADERSIZE;
+  char *pheader;
+
+  pheader = header;
+  while(nheader_read < buf_left)
+  {   
+    nheader_read = recv(sockfds, pheader, BUFSIZE, 0);
+    if(nheader_read == 0)
+      break;
+    buf_left -= nheader_read;
+    pheader += nheader_read;  
+  }
+  return buf_left;  
+}
 
 /* Essa funcao escreve o buffer recebido dentro dele. */
-int get_file(char **buffer, int nbuffer_left, FILE **fp, char *filename,
-             int sockfd)
+int get_file(char *buffer, char *header, int buf_left,  int header_pos,
+             FILE *fp, struct name names, int sockfds)
 { 
   int recv_data = 0;
+  fwrite(header + header_pos, 1, HEADERSIZE - buf_left - header_pos, fp);
   do
-  {
-    fwrite(*buffer, 1, recv_data + nbuffer_left, *fp);
-    nbuffer_left = 0;
-    recv_data = recv(sockfd, *buffer, BUFSIZE, 0);
+  {    
+    recv_data = recv(sockfds, buffer, BUFSIZE, 0);
     if (recv_data < 0)
     {
       fprintf(stderr,"Recv error:%s\n", strerror(errno));
       return -1;
     }        
-  } while (recv_data > 0);
+    fwrite(buffer, 1, recv_data, fp);
+  }while(recv_data > 0); 
   
-  fclose(*fp);
+  fclose(fp);
   return 0;
 }
 
 int main(int argc, char *argv[])
 {
-  char *buffer, *uri = NULL, *path = NULL, *host = NULL, *filename = NULL;
-  int nbuffer_left = 0, sockfdm = -1, uri_size = 0;
+  char buffer[BUFSIZE], header[HEADERSIZE];
+  int buf_left = 0, header_pos = 0, sockfdm = -1;
   FILE *fp = NULL;
-  
-  buffer = (char *)calloc(BUFSIZE, sizeof(char));
+  struct name names;
    
-  uri_size = parse_param(argc, argv[1], &uri);
-  if (uri_size ==  -1)
+  if (parse_param(argc, argv[1], &names) == -1)
     goto error;
   
-  if (get_names(uri, uri_size, &host, &path, &filename) == -1)
+  if (get_names(&names) == -1)
     goto error;
   
-  if (open_file(&fp, filename, argv[2]) == -1)
-    goto error;
+  if (!(fp = open_file(names, argv[2])))
+  {
+     fprintf(stderr, "File error:%s\n", strerror(errno));
+     goto error;
+  }  
 
-  sockfdm = socket_connect(host);
+  sockfdm = socket_connect(names);
   if (sockfdm > 0)
-    if (send_get(path, host, sockfdm) == -1)
+    if (send_get(names, sockfdm) == -1)
       goto error;
   
-  nbuffer_left = check_header(&buffer,sockfdm);
-  if (nbuffer_left == -1)
-    goto error;
-
-  if (get_file(&buffer, nbuffer_left, &fp, filename, sockfdm));
   
-  free(uri);
-  free(host);
+  if ((buf_left = get_header(header, sockfdm)) == -1)
+    goto error;
+  
+  if (check_http_errors(header) == -1)
+    goto error;
+  
+  if ((header_pos = check_header_end(header)) == -1)
+    goto error;
+  
+  if (get_file(buffer, header, buf_left, header_pos, fp, names, sockfdm) == -1)
+    goto error;
+  
   close(sockfdm);
   return 0;
       
-  error:
+error:
     if (sockfdm)
       close(sockfdm);
     if (fp)
-      if (remove(filename) != 0)
+      if (remove(names.filename) != 0)
         fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
-    free(uri);
-    free(host);
-    return -1;
+return -1;
 }
 
 
