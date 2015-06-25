@@ -1,54 +1,84 @@
-#include "client.h"
-
-/* Realiza um parse dos parametros recebidos no terminal e remove o
- * http:// se estiver presente
+/*!
+ * \file main.c
+ * \brief Cliente para download de arquivos 
+ * \date 25/06/2015
+ * \author Diogo Morgado <diogo.teixeira@aker.com.br>
  */
 
-static int parse_param(int argc, const char *url, struct name *names)
+#include "client.h"
+
+/*!
+ * \brief Realiza um parse dos parametros recebidos no terminal e remove o
+ *        http:// se estiver presente.
+ * \param[in] argc Numero de parametros do comando
+ * \param[in] url Segundo parametro do comando
+ * \param[out] http_names Estrutura que ira receber a URL completa
+ * \return 0 se for OK 
+ * \return -1 se der algum erro
+ */
+
+static int parse_param(int argc, const char *url,
+                       struct http_addr_names *http_names)
 {
   char *url_s = NULL;
-  if (argc > 3)
+
+  if (argc > 3 || argc == 0)
   {
-    fprintf(stderr, "Bad parameters\n");
+    fprintf(stderr,"%s\n%s\n%s", "Bad parameter", "Usage: dget [URL] [OPTION]",
+            "-f, force overwrite");
     return -1;
   }
   
   url_s = strdup(url);
-          
-  /* Removendo http:// da URI */
-  if (memcmp(url_s, "http://", 7) == 0)
-    strncpy(names->uri, url_s + 7, MAXURI);
-  else
-    strncpy(names->uri, url_s, MAXURI);
   
-  free(url_s);
-  return 0;
-}
-
-/* Utiliza a uri completa para copiar o path, host e filename para uma
- * struct
- */
-
-static int get_names(struct name *names)
-{
-  if (strchr(names->uri, '/') != NULL)
-  {
-    memcpy(names->path, strchr(names->uri, '/'), MAXPATH);
-    memccpy(names->host, names->uri, '/', MAXHOST);
-    names->host[strlen(names->host) - 1] = '\0';
-    memcpy(names->filename, strrchr(names->uri, '/') + 1, MAXFILE);
-  }
-  else
+  if(strlen(url_s) > MAXURILEN)
   {
     fprintf(stderr, "Bad URL\n");
     return -1;
   }
+    
+  if (strncmp(url_s, "http://", 7) == 0)
+    strncpy(http_names->uri, url_s + 7, MAXURILEN);
+  else
+    strncpy(http_names->uri, url_s, MAXURILEN);
+  
+  free(url_s);
+  
   return 0;
 }
 
-/* Cria o arquivo de acordo com o filename e flag */
+/*!
+ * \brief Utiliza a uri completa para copiar o path, host e filename para 
+ *        http_names
+ * \param[out] http_names Estrutura que ira receber os nomes do host, path e
+ *             filename
+ * \return 0 se for OK
+ * \return -1 se der erro
+ */
 
-FILE *open_file(struct name names, char *flag)
+static int get_names(struct http_addr_names *http_names)
+{
+  if (sscanf(http_names->uri,"%[^/]%s", http_names->host,
+            http_names->path) != 2)
+  {
+    fprintf(stderr, "Bad URL:%s\n", strerror(errno));
+    return -1;
+  }
+  else
+    strncpy(http_names->filename, strrchr(http_names->path, '/') + 1,
+           MAXFILENAMELEN);
+ 
+  return 0;
+}
+
+/*!
+ * \brief Cria o arquivo de acordo com o filename e flag
+ * \param[in] http_names Estrutura com o nome do arquivo
+ * \param[in] flag Opcao para forcar a sobreescrita do arquivo
+ * \return Ponteiro do arquivo aberto
+ */
+
+static FILE *open_file(struct http_addr_names *http_names, char *flag)
 {
   char *filep;
 
@@ -60,60 +90,75 @@ FILE *open_file(struct name names, char *flag)
   else
     filep = "wx";
  
-  return fopen(names.filename, filep);
+  return fopen(http_names->filename, filep);
 }
 
-/* Funcao para abrir o socket e realizar a conexao */
+/*!
+ * \brief Cria o socket e conecta ele ao endereco especificado
+ * \param[in] http_names Estrutura com o nome do host
+ * \return Descritor do socket
+ */
 
-int socket_connect (struct name names)
+static int socket_connect (const struct http_addr_names *http_names)
 {
-  int sockfd = -1, rv;
-  struct addrinfo hints, *servinfo, *p;
+  int sockfd = -1, ret = 0;
+  struct addrinfo hints, *servinfo, *aux;
 
   memset(&hints, 0, sizeof hints);
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  if ((rv = getaddrinfo(names.host, "http", &hints, &servinfo)) != 0)
+  if ((ret = getaddrinfo(http_names->host, "http", &hints, &servinfo)) != 0)
   {
-    fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (rv) );
-    freeaddrinfo(servinfo);
+    fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (ret) );
     return -1;
   }
 
-  for (p = servinfo; p != NULL; p = p->ai_next)
+  for (aux = servinfo; aux != NULL; aux = aux->ai_next)
   {
-    if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
+    if ((sockfd = socket(aux->ai_family, aux->ai_socktype,
+         aux->ai_protocol)) == -1)
     {
       fprintf(stderr, "Socket error: %s\n", strerror(errno));
       continue;
     }
-    if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
+
+    if (connect(sockfd, aux->ai_addr, aux->ai_addrlen) == -1)
     {
       close(sockfd);
       fprintf(stderr, "Connnect error: %s\n", strerror(errno));
       continue;
     }
+
     break;
   }
+
   freeaddrinfo(servinfo);
   return sockfd;
 }
 
-/* Funcao para formatar a mensagem GET e enviar para o servidor */
+/*!
+ * \brief Formata a mensagem HTTP_GET e envia para o servidor
+ * \param[in] http_names Estrutura com o nome do host e path para o arquivo
+ * \param[in] sockfd Descritor do socket
+ * \return 0 se for ok
+ * \return -1 se der algum erro
+ */ 
 
-int send_get(struct name names, int sockfd)
+static int send_http_get(const struct http_addr_names *http_names, int sockfd)
 {
-  char get_url[1024];
+  char http_get_msg[MAXHTTP_GETLEN];
 
-  if (snprintf(get_url, sizeof(get_url),
-        "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", names.path, names.host) < 0)
+  if (snprintf(http_get_msg, sizeof(http_get_msg),
+      "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", http_names->path,
+      http_names->host) < 0)
   {
-    fprintf(stderr, "URL maior que o buffer\n");
+    fprintf(stderr, "Error building http get message:%s\n", strerror(errno));
+//    fprintf(stderr, "URL maior que o buffer\n");
     return -1;
   }
 
-  if (send(sockfd, get_url, strlen(get_url), 0) < 0)
+  if (send(sockfd, http_get_msg, strlen(http_get_msg), 0) < 0)
   {
     fprintf(stderr, "Send error:%s\n", strerror(errno));
     return -1;
@@ -121,42 +166,90 @@ int send_get(struct name names, int sockfd)
 return 0;  
 }
 
-/* Essa funcao le uma linha de um buffer ate encontrar uma nova linha,
- * escreve ela em um buffer temporario,  e retorna o tamanho dela
+/*!
+ * \brief Copia todo o header e mais um pedaco do conteudo para uma variavel  
+ * \param[in] sockfd Descritor do socket
+ * \param[out] header Variavel que contem o header da resposta do HTTP GET
+ * \return 0 se for OK
+ * \return -1 se der algum erro
  */
 
-int get_line(char *buffer, char *buf_tmp)
+
+static int get_http_header(char *header, int sockfd)
 {
-  char *end_line, *pbuffer;
-  int buf_len;
+  int num_bytes_header = 0;
+  int num_bytes_aux = 0;
+  char *header_aux;
+
+  header_aux = header;
+  while (num_bytes_aux < HEADERSIZE - 1)
+  {   
+    num_bytes_header = recv(sockfd, header_aux, HEADERSIZE - num_bytes_aux -
+                            1, 0);
+    if (num_bytes_header < 0)
+    {
+      fprintf(stderr, "Recv error:%s\n", strerror(errno));
+      return -1;
+    }
+    if (num_bytes_header == 0)
+      break;
+
+    num_bytes_aux += num_bytes_header;
+    header_aux += num_bytes_header;  
+  }
+
+  *header_aux = 0;  
+
+  return 0;  
+}
+
+/*!
+ * \brief Essa funcao le uma linha de um buffer ate encontrar uma nova linha,
+ *        escreve ela em um buffer temporario,  e retorna o tamanho dela
+ * \param[in] buffer Ponteiro para uma posicao de um buffer
+ * \param[out] buf_tmp Ponteiro para um buffer temporario
+ * \return buf_len Retorna tamanho do buffer temporario
+ * \return -1 se der algum erro
+ */
+
+static int get_line(char *buffer, char *buf_tmp)
+{
+  char *end_line, *buffer_start;
+  int buf_len = 0;
   
-  pbuffer = buffer;
+  buffer_start = buffer;
   end_line = strchr(buffer, '\n');
   if (end_line != NULL)
   {
-    buf_len = end_line - pbuffer + 1;
-    memcpy(buf_tmp, buffer, buf_len);
- //   pbuffer = end_line + 1;
+    buf_len = end_line - buffer_start + 1;
+    strncpy(buf_tmp, buffer, buf_len);
     return buf_len;
   }
   
   fprintf(stderr,"Header error");
-  return -1;    
   
+  return -1;    
 }
 
-/* Checa por erros http */
+/*! 
+ * \brief Checa por erros http
+ * \param[in] header Ponteiro para o inicio do header
+ * \return 0 se for OK
+ * \return -1 se der algum erro
+ */
 
 static int check_http_errors(char *header)
 {
-  char buf_tmp[MAXLINE];
-  char http_status[MAXHTTP_STATUS];
-  int  status = 0, ns = 0;
-   
-  if(get_line(header, buf_tmp) != -1)   
+  char buf_tmp[MAXLINELEN];
+  char http_status[MAXHTTP_STATUSLEN];
+  int  status = 0, ret = 0;
+  
+  memset(buf_tmp, 0, sizeof(buf_tmp));
+
+  if (get_line(header, buf_tmp) != -1)   
   {    
-    ns = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
-    if (ns != 2)
+    ret = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
+    if (ret != 2)
     {
       fprintf(stderr, "Header error");
       return -1;
@@ -172,122 +265,125 @@ static int check_http_errors(char *header)
   }
   else
     return -1;
+  
   return 0;
 }
 
-/* Funcao para encontrar o final do header, ele e lido linha a linha ate
+/*!
+ * \brief Funcao para encontrar o final do header, ele e lido linha a linha ate
  * encontrar uma linha que tem somente uma nova linha (ou carrier seguido
  * de linha)
+ * \param[in] header Variavel que contem o header
+ * \return 0 se for OK
+ * \return 1 se der algum erro
  */
 
-int check_header_end(char *header)
+static int check_header_end(char *header)
 {
-  int nheader_read = 0;
-  char buf_tmp[BUFSIZE];      
-  char *pheader;   
+  int num_bytes_header = 0;
+  char buf_tmp[HEADERSIZE];      
+  char *header_aux;   
   
-  memset(buf_tmp, 0, BUFSIZE);
-  pheader = header;
+  memset(buf_tmp, 0, HEADERSIZE);
+  header_aux = header;
   
   while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
   {
-    memset(buf_tmp, 0, BUFSIZE);
-    nheader_read = get_line(pheader + nheader_read, buf_tmp) +  nheader_read;
-    if(nheader_read == -1)
+    memset(buf_tmp, 0, HEADERSIZE);
+    num_bytes_header = get_line(header_aux + num_bytes_header, buf_tmp) +
+                                num_bytes_header;
+    if (num_bytes_header == -1)
       return -1;                              
   }
-  return nheader_read;
+  
+  return num_bytes_header;
 }
 
-/* Copia todo o header e mais um pedaco do conteudo para uma variavel e 
- * retorna o espaco restante (nao utilizado) da variavel
- */
+/*! 
+ * \brief Essa funcao escreve o buffer recebido dentro do arquivo aberto
+ * \param[in] header Variavel que contem o header e um pedaco do conteudo 
+ * \param[in] header_len Variavel que contem o tamanho do header 
+ * \param[in] sockfd Descritor do socket
+ * \param[out] buffer Variavel para qual os dados recebidos serao enviados
+ * \param[out] fp Descritor do arquivo aberto 
+ * \return 0 se for OK
+ * \return -1 se der algum erro
+ */ 
 
-static int get_header(char *header, int sockfds)
-{
-  int nheader_read = 0;
-  int buf_left = HEADERSIZE;
-  char *pheader;
-
-  pheader = header;
-  while(nheader_read < buf_left)
-  {   
-    nheader_read = recv(sockfds, pheader, BUFSIZE, 0);
-    if(nheader_read == 0)
-      break;
-    buf_left -= nheader_read;
-    pheader += nheader_read;  
-  }
-  return buf_left;  
-}
-
-/* Essa funcao escreve o buffer recebido dentro do arquivo aberto */
-
-int get_file(char *buffer, char *header, int buf_left,  int header_pos,
-             FILE *fp, struct name names, int sockfds)
+static int get_file(char *buffer, char *header, int header_len,
+                    FILE *fp, int sockfd)
 { 
   int recv_data = 0;
-  fwrite(header + header_pos, 1, HEADERSIZE - buf_left - header_pos, fp);
+  fwrite(header + header_len, 1, HEADERSIZE - header_len - 1, fp);
   do
   {    
-    recv_data = recv(sockfds, buffer, BUFSIZE, 0);
+    recv_data = recv(sockfd, buffer, BUFSIZE, 0);
     if (recv_data < 0)
     {
       fprintf(stderr,"Recv error:%s\n", strerror(errno));
       return -1;
     }        
     fwrite(buffer, 1, recv_data, fp);
-  }while(recv_data > 0); 
+  } while(recv_data > 0); 
   
   fclose(fp);
   return 0;
 }
+/*! 
+ * \brief Funcao principal que ira realizar as chamadas das funcoes do programa
+ * \param[in] argc Numero de parametros recebidos
+ * \param[in] argv Vetor com os parametros separados em strings
+ * \return 0 se for OK
+ * \return -1 se der algum erro
+ */
 
 int main(int argc, char *argv[])
 {
   char buffer[BUFSIZE], header[HEADERSIZE];
-  int buf_left = 0, header_pos = 0, sockfdm = -1;
+  int  header_len = 0, sockfd = -1;
   FILE *fp = NULL;
-  struct name names;
+  struct http_addr_names http_names;
    
-  if (parse_param(argc, argv[1], &names) == -1)
+  if (parse_param(argc, argv[1], &http_names) == -1)
     goto error;
   
-  if (get_names(&names) == -1)
+  if (get_names(&http_names) == -1)
     goto error;
   
-  if (!(fp = open_file(names, argv[2])))
+  if (!(fp = open_file(&http_names, argv[2])))
   {
      fprintf(stderr, "File error:%s\n", strerror(errno));
      goto error;
   }  
 
-  sockfdm = socket_connect(names);
-  if (sockfdm > 0)
-    if (send_get(names, sockfdm) == -1)
-      goto error;
+  sockfd = socket_connect(&http_names);
+  if (sockfd > 0)
+  {  if (send_http_get(&http_names, sockfd) == -1)
+       goto error;
+  }
+  else
+    goto error;
   
-  
-  if ((buf_left = get_header(header, sockfdm)) == -1)
+  if (get_http_header(header, sockfd) == -1)
     goto error;
   
   if (check_http_errors(header) == -1)
     goto error;
   
-  if ((header_pos = check_header_end(header)) == -1)
+  if ((header_len = check_header_end(header)) == -1)
     goto error;
   
-  if (get_file(buffer, header, buf_left, header_pos, fp, names, sockfdm) == -1)
+  if (get_file(buffer, header, header_len, fp, sockfd) == -1)
     goto error;
   
-  close(sockfdm);
+  close(sockfd);
   return 0;
       
 error:
-    if (sockfdm)
-      close(sockfdm);
+    if (sockfd)
+      close(sockfd);
     if (fp)
-      if (remove(names.filename) != 0)
+      if (remove(http_names.filename) != 0)
         fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
 return -1;
 }

@@ -13,22 +13,24 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <limits.h>
 
 #define BUFSIZE BUFSIZ
 #define HEADERSIZE BUFSIZ
-#define MAXHOST 256
-#define MAXPATH 512
-#define MAXFILE 256
-#define MAXURI 1024
-#define MAXLINE 128
-#define MAXHTTP_STATUS 32
-
-struct name 
+#define MAXHOSTLEN 256
+#define MAXPATHLEN 512
+#define MAXFILENAMELEN 256
+#define MAXURILEN 1024
+#define MAXLINELEN 128
+#define MAXHTTP_STATUSLEN 32
+#define MAXHTTP_GETLEN 1024
+#define HTTP_PORT 80
+struct http_addr_names 
 {
-  char uri[MAXURI];
-  char host[MAXHOST];
-  char path[MAXPATH];
-  char filename[MAXFILE];
+  char uri[MAXURILEN];
+  char host[MAXHOSTLEN];
+  char path[MAXPATHLEN];
+  char filename[MAXFILENAMELEN];
     
 };
 
