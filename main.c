@@ -1,5 +1,9 @@
 #include "client.h"
 
+/* Realiza um parse dos parametros recebidos no terminal e remove o
+ * http:// se estiver presente
+ */
+
 static int parse_param(int argc, const char *url, struct name *names)
 {
   char *url_s = NULL;
@@ -21,6 +25,10 @@ static int parse_param(int argc, const char *url, struct name *names)
   return 0;
 }
 
+/* Utiliza a uri completa para copiar o path, host e filename para uma
+ * struct
+ */
+
 static int get_names(struct name *names)
 {
   if (strchr(names->uri, '/') != NULL)
@@ -38,6 +46,8 @@ static int get_names(struct name *names)
   return 0;
 }
 
+/* Cria o arquivo de acordo com o filename e flag */
+
 FILE *open_file(struct name names, char *flag)
 {
   char *filep;
@@ -52,6 +62,8 @@ FILE *open_file(struct name names, char *flag)
  
   return fopen(names.filename, filep);
 }
+
+/* Funcao para abrir o socket e realizar a conexao */
 
 int socket_connect (struct name names)
 {
@@ -89,6 +101,7 @@ int socket_connect (struct name names)
 }
 
 /* Funcao para formatar a mensagem GET e enviar para o servidor */
+
 int send_get(struct name names, int sockfd)
 {
   char get_url[1024];
@@ -108,6 +121,10 @@ int send_get(struct name names, int sockfd)
 return 0;  
 }
 
+/* Essa funcao le uma linha de um buffer ate encontrar uma nova linha,
+ * escreve ela em um buffer temporario,  e retorna o tamanho dela
+ */
+
 int get_line(char *buffer, char *buf_tmp)
 {
   char *end_line, *pbuffer;
@@ -119,7 +136,7 @@ int get_line(char *buffer, char *buf_tmp)
   {
     buf_len = end_line - pbuffer + 1;
     memcpy(buf_tmp, buffer, buf_len);
-    pbuffer = end_line + 1;
+ //   pbuffer = end_line + 1;
     return buf_len;
   }
   
@@ -127,6 +144,8 @@ int get_line(char *buffer, char *buf_tmp)
   return -1;    
   
 }
+
+/* Checa por erros http */
 
 static int check_http_errors(char *header)
 {
@@ -156,6 +175,11 @@ static int check_http_errors(char *header)
   return 0;
 }
 
+/* Funcao para encontrar o final do header, ele e lido linha a linha ate
+ * encontrar uma linha que tem somente uma nova linha (ou carrier seguido
+ * de linha)
+ */
+
 int check_header_end(char *header)
 {
   int nheader_read = 0;
@@ -175,6 +199,10 @@ int check_header_end(char *header)
   return nheader_read;
 }
 
+/* Copia todo o header e mais um pedaco do conteudo para uma variavel e 
+ * retorna o espaco restante (nao utilizado) da variavel
+ */
+
 static int get_header(char *header, int sockfds)
 {
   int nheader_read = 0;
@@ -193,7 +221,8 @@ static int get_header(char *header, int sockfds)
   return buf_left;  
 }
 
-/* Essa funcao escreve o buffer recebido dentro dele. */
+/* Essa funcao escreve o buffer recebido dentro do arquivo aberto */
+
 int get_file(char *buffer, char *header, int buf_left,  int header_pos,
              FILE *fp, struct name names, int sockfds)
 { 
