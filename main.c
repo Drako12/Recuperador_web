@@ -26,7 +26,7 @@ static int parse_param(int n_params, const char *url,
 
   if (n_params > 3 || n_params == 0)
   {
-    fprintf(stderr,"%s\n%s\n%s", "Bad parameter", "Usage: dget [URL] [OPTION]",
+    fprintf(stderr, "Bad parameters\nUsage: dget [URL] [OPTION]\n"
             "-f, force overwrite");
     return -1;
   }
@@ -38,16 +38,16 @@ static int parse_param(int n_params, const char *url,
     return -1;    
   }
 
-  if(strlen(url_s) > MAXURILEN)
+  if(strlen(url_s) > MAX_URI_LEN)
   {
     fprintf(stderr, "Bad URL\n");
     return -1;
   }
     
   if (strncmp(url_s, "http://", 7) == 0)
-    strncpy(req_info->uri, url_s + 7, MAXURILEN);
+    strncpy(req_info->uri, url_s + 7, MAX_URI_LEN);
   else
-    strncpy(req_info->uri, url_s, MAXURILEN);
+    strncpy(req_info->uri, url_s, MAX_URI_LEN);
   
   free(url_s);
   
@@ -67,15 +67,13 @@ static int parse_param(int n_params, const char *url,
 
 static int get_names(struct cli_req_info *req_info)
 {
-  if (sscanf(req_info->uri,"%[^/]%s", req_info->host,
-            req_info->path) != 2)
+  if (sscanf(req_info->uri,"%[^/]%s", req_info->host, req_info->path) != 2)
   {
     fprintf(stderr, "Bad URL:%s\n", strerror(errno));
     return -1;
   }
   else
-    strncpy(req_info->filename, strrchr(req_info->path, '/') + 1,
-           MAXFILENAMELEN);
+    strncpy(req_info->filename, strrchr(req_info->path, '/') + 1, NAME_MAX);
  
   return 0;
 }
@@ -99,8 +97,8 @@ static FILE *open_file(struct cli_req_info *req_info, char *flag)
     filep = "w";
     else
     {
-      fprintf(stderr,"%s\n%s\n%s\n", "Bad parameter",
-              "Usage: dget [URL] [OPTION]", "-f, force overwrite");
+      fprintf(stderr,"Bad parameter\n Usage: dget [URL] [OPTION]\n"
+              "-f, force overwrite");
       return NULL;
     }
   }
@@ -118,7 +116,7 @@ static FILE *open_file(struct cli_req_info *req_info, char *flag)
  * \return Descritor do socket
  */
 
-static int socket_connect(const struct cli_req_info *req_info)
+static int socket_connect(const char *host)
 {
   int sockfd = -1, ret = 0;
   struct addrinfo hints, *servinfo, *aux;
@@ -127,9 +125,9 @@ static int socket_connect(const struct cli_req_info *req_info)
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  if ((ret = getaddrinfo(req_info->host, HTTP_PORT, &hints, &servinfo)) != 0)
+  if ((ret = getaddrinfo(host, HTTP_PORT, &hints, &servinfo)) != 0)
   {
-    fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (ret) );
+    fprintf(stderr, "Getaddrinfo error: %s\n", gai_strerror(ret));
     return -1;
   }
 
@@ -168,14 +166,13 @@ static int socket_connect(const struct cli_req_info *req_info)
 
 static int send_http_get(const struct cli_req_info *req_info, int sockfd)
 {
-  char http_get_msg[MAXHTTP_GETLEN];
+  char http_get_msg[MAX_HTTP_GET_LEN];
 
   if (snprintf(http_get_msg, sizeof(http_get_msg),
       "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", req_info->path,
       req_info->host) < 0)
   {
     fprintf(stderr, "Error building http get message:%s\n", strerror(errno));
-//    fprintf(stderr, "URL maior que o buffer\n");
     return -1;
   }
 
@@ -210,11 +207,13 @@ static int get_http_header(char *header, int sockfd)
   {   
     num_bytes_header = recv(sockfd, header_aux, HEADERSIZE - num_bytes_aux -
                             1, 0);
+                          
     if (num_bytes_header < 0)
     {
       fprintf(stderr, "Recv error:%s\n", strerror(errno));
       return -1;
     }
+
     if (num_bytes_header == 0)
       break;
 
@@ -250,6 +249,7 @@ static int get_line(char *buffer, char *buf_tmp)
   {
     buf_len = end_line - buffer_start + 1;
     strncpy(buf_tmp, buffer, buf_len);
+    buf_tmp[buf_len] = '\0';
     return buf_len;
   }
   
@@ -269,15 +269,16 @@ static int get_line(char *buffer, char *buf_tmp)
 
 static int check_http_errors(char *header)
 {
-  char buf_tmp[MAXLINELEN];
-  char http_status[MAXHTTP_STATUSLEN];
+  char buf_tmp[LINE_MAX];
+  char http_status[MAX_HTTP_STATUS_LEN];
   int  status = 0, ret = 0;
   
   memset(buf_tmp, 0, sizeof(buf_tmp));
 
   if (get_line(header, buf_tmp) != -1)   
-  {    
-    ret = sscanf(buf_tmp,"%*[^ ]%d %[aA-zZ ]", &status, http_status);   
+  {   
+   //ret = sscanf(buf_tmp, "%*[^ ]"RESOLVE_D(LINE_MAX)" "RESOLVE_S(MAX_HTTP_STATUS_LEN), &status, http_status);
+   ret = sscanf(buf_tmp, "%*[^ ] %d %s", &status, http_status);   
     if (ret != 2)
     {
       fprintf(stderr, "Header error");
@@ -320,7 +321,6 @@ static int check_header_end(char *header)
   
   while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
   {
-    memset(buf_tmp, 0, HEADERSIZE);
     num_bytes_header = get_line(header_aux + num_bytes_header, buf_tmp) +
                                 num_bytes_header;
     if (num_bytes_header == -1)
@@ -336,7 +336,6 @@ static int check_header_end(char *header)
  * \param[in] header Variavel que contem o header e um pedaco do conteudo 
  * \param[in] header_len Variavel que contem o tamanho do header 
  * \param[in] sockfd Descritor do socket
- * 
  * \param[out] buffer Variavel para qual os dados recebidos serao enviados
  * \param[out] fp Descritor do arquivo aberto 
  * 
@@ -354,7 +353,7 @@ static int get_file(char *buffer, char *header, int header_len,
     recv_data = recv(sockfd, buffer, BUFSIZE, 0);
     if (recv_data < 0)
     {
-      fprintf(stderr,"Recv error:%s\n", strerror(errno));
+      fprintf(stderr, "Recv error:%s\n", strerror(errno));
       return -1;
     }        
     fwrite(buffer, 1, recv_data, fp);
@@ -373,6 +372,7 @@ int main(int argc, char *argv[])
   
   //req_info = { 0 };
   memset(&req_info, 0, sizeof(req_info));
+  memset(buffer, 0, sizeof(buffer));
 
   if (parse_param(argc, argv[1], &req_info) == -1)
     goto error;
@@ -381,22 +381,18 @@ int main(int argc, char *argv[])
     goto error;
   
   if (!(fp = open_file(&req_info, argv[2])))
-  {
-    
-    fprintf(stderr, "File error:%s\n%s\n%s\n", strerror(errno),
-              "Usage: dget [URL] [OPTION]", "-f, force overwrite");
+  {    
+    fprintf(stderr, "File error:%s\nUsage: dget [URL] [OPTION]\n"
+            "-f, force overwrite", strerror(errno));
     goto error;
   }  
 
-  sockfd = socket_connect(&req_info);
-  if (sockfd > 0)
-  {  if (send_http_get(&req_info, sockfd) == -1)
-       goto error;
-  }
-
-  else
+  if (!(sockfd = socket_connect(req_info.host)) > 0)
     goto error;
   
+  if (send_http_get(&req_info, sockfd) == -1)
+    goto error;
+    
   if (get_http_header(header, sockfd) == -1)
     goto error;
   

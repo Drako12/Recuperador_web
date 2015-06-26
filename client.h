@@ -17,21 +17,22 @@
 
 #define BUFSIZE BUFSIZ
 #define HEADERSIZE BUFSIZ
-#define MAXHOSTLEN 256
-#define MAXPATHLEN 512
-#define MAXFILENAMELEN 256
-#define MAXURILEN 1024
-#define MAXLINELEN 128
-#define MAXHTTP_STATUSLEN 32
-#define MAXHTTP_GETLEN 1024
+#define MAX_HOST_LEN 256
+#define MAX_URI_LEN 1024
+#define MAX_HTTP_STATUS_LEN 32
+#define MAX_HTTP_GET_LEN 1024
 #define HTTP_PORT "80"
+#define FORMAT_S(S) "%" #S "s"
+#define FORMAT_D(D) "%" #D "d"
+#define RESOLVE_S(S) FORMAT_S(S)
+#define RESOLVE_D(D) FORMAT_D(D)
 
 struct cli_req_info 
 {
-  char uri[MAXURILEN];
-  char host[MAXHOSTLEN];
-  char path[MAXPATHLEN];
-  char filename[MAXFILENAMELEN];
+  char uri[MAX_URI_LEN];
+  char host[MAX_HOST_LEN];
+  char path[PATH_MAX];
+  char filename[NAME_MAX];
     
 };
 
