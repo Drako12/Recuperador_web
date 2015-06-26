@@ -24,8 +24,9 @@
 #define MAXLINELEN 128
 #define MAXHTTP_STATUSLEN 32
 #define MAXHTTP_GETLEN 1024
-#define HTTP_PORT 80
-struct http_addr_names 
+#define HTTP_PORT "80"
+
+struct cli_req_info 
 {
   char uri[MAXURILEN];
   char host[MAXHOSTLEN];

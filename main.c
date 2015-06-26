@@ -1,5 +1,4 @@
 /*!
- * \file main.c
  * \brief Cliente para download de arquivos 
  * \date 25/06/2015
  * \author Diogo Morgado <diogo.teixeira@aker.com.br>
@@ -10,19 +9,22 @@
 /*!
  * \brief Realiza um parse dos parametros recebidos no terminal e remove o
  *        http:// se estiver presente.
+ *
  * \param[in] argc Numero de parametros do comando
  * \param[in] url Segundo parametro do comando
- * \param[out] http_names Estrutura que ira receber a URL completa
+ * 
+ * \param[out] req_info Estrutura que ira receber a URL completa
+ * 
  * \return 0 se for OK 
  * \return -1 se der algum erro
  */
 
-static int parse_param(int argc, const char *url,
-                       struct http_addr_names *http_names)
+static int parse_param(int n_params, const char *url,
+                       struct cli_req_info *req_info)
 {
   char *url_s = NULL;
 
-  if (argc > 3 || argc == 0)
+  if (n_params > 3 || n_params == 0)
   {
     fprintf(stderr,"%s\n%s\n%s", "Bad parameter", "Usage: dget [URL] [OPTION]",
             "-f, force overwrite");
@@ -30,7 +32,12 @@ static int parse_param(int argc, const char *url,
   }
   
   url_s = strdup(url);
-  
+  if (url_s == NULL)
+  {
+    fprintf(stderr, "Error allocating memory:\n%s", strerror(errno));
+    return -1;    
+  }
+
   if(strlen(url_s) > MAXURILEN)
   {
     fprintf(stderr, "Bad URL\n");
@@ -38,9 +45,9 @@ static int parse_param(int argc, const char *url,
   }
     
   if (strncmp(url_s, "http://", 7) == 0)
-    strncpy(http_names->uri, url_s + 7, MAXURILEN);
+    strncpy(req_info->uri, url_s + 7, MAXURILEN);
   else
-    strncpy(http_names->uri, url_s, MAXURILEN);
+    strncpy(req_info->uri, url_s, MAXURILEN);
   
   free(url_s);
   
@@ -49,23 +56,25 @@ static int parse_param(int argc, const char *url,
 
 /*!
  * \brief Utiliza a uri completa para copiar o path, host e filename para 
- *        http_names
- * \param[out] http_names Estrutura que ira receber os nomes do host, path e
+ *        req_info
+ *
+ * \param[out] req_info Estrutura que ira receber os nomes do host, path e
  *             filename
+ * 
  * \return 0 se for OK
  * \return -1 se der erro
  */
 
-static int get_names(struct http_addr_names *http_names)
+static int get_names(struct cli_req_info *req_info)
 {
-  if (sscanf(http_names->uri,"%[^/]%s", http_names->host,
-            http_names->path) != 2)
+  if (sscanf(req_info->uri,"%[^/]%s", req_info->host,
+            req_info->path) != 2)
   {
     fprintf(stderr, "Bad URL:%s\n", strerror(errno));
     return -1;
   }
   else
-    strncpy(http_names->filename, strrchr(http_names->path, '/') + 1,
+    strncpy(req_info->filename, strrchr(req_info->path, '/') + 1,
            MAXFILENAMELEN);
  
   return 0;
@@ -73,12 +82,14 @@ static int get_names(struct http_addr_names *http_names)
 
 /*!
  * \brief Cria o arquivo de acordo com o filename e flag
- * \param[in] http_names Estrutura com o nome do arquivo
+ *
+ * \param[in] req_info Estrutura com o nome do arquivo
  * \param[in] flag Opcao para forcar a sobreescrita do arquivo
+ * 
  * \return Ponteiro do arquivo aberto
  */
 
-static FILE *open_file(struct http_addr_names *http_names, char *flag)
+static FILE *open_file(struct cli_req_info *req_info, char *flag)
 {
   char *filep;
 
@@ -86,20 +97,28 @@ static FILE *open_file(struct http_addr_names *http_names, char *flag)
   { 
     if (strcmp(flag, "-f") == 0)
     filep = "w";
+    else
+    {
+      fprintf(stderr,"%s\n%s\n%s\n", "Bad parameter",
+              "Usage: dget [URL] [OPTION]", "-f, force overwrite");
+      return NULL;
+    }
   }
   else
     filep = "wx";
  
-  return fopen(http_names->filename, filep);
+  return fopen(req_info->filename, filep);
 }
 
 /*!
  * \brief Cria o socket e conecta ele ao endereco especificado
- * \param[in] http_names Estrutura com o nome do host
+ *
+ * \param[in] req_info Estrutura com o nome do host
+ * 
  * \return Descritor do socket
  */
 
-static int socket_connect (const struct http_addr_names *http_names)
+static int socket_connect(const struct cli_req_info *req_info)
 {
   int sockfd = -1, ret = 0;
   struct addrinfo hints, *servinfo, *aux;
@@ -108,7 +127,7 @@ static int socket_connect (const struct http_addr_names *http_names)
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
 
-  if ((ret = getaddrinfo(http_names->host, "http", &hints, &servinfo)) != 0)
+  if ((ret = getaddrinfo(req_info->host, HTTP_PORT, &hints, &servinfo)) != 0)
   {
     fprintf (stderr, "Getaddrinfo error: %s\n", gai_strerror (ret) );
     return -1;
@@ -139,19 +158,21 @@ static int socket_connect (const struct http_addr_names *http_names)
 
 /*!
  * \brief Formata a mensagem HTTP_GET e envia para o servidor
- * \param[in] http_names Estrutura com o nome do host e path para o arquivo
+ *
+ * \param[in] req_info Estrutura com o nome do host e path para o arquivo
  * \param[in] sockfd Descritor do socket
+ * 
  * \return 0 se for ok
  * \return -1 se der algum erro
  */ 
 
-static int send_http_get(const struct http_addr_names *http_names, int sockfd)
+static int send_http_get(const struct cli_req_info *req_info, int sockfd)
 {
   char http_get_msg[MAXHTTP_GETLEN];
 
   if (snprintf(http_get_msg, sizeof(http_get_msg),
-      "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", http_names->path,
-      http_names->host) < 0)
+      "GET %s HTTP/1.0\r\nHOST:%s\r\n\r\n", req_info->path,
+      req_info->host) < 0)
   {
     fprintf(stderr, "Error building http get message:%s\n", strerror(errno));
 //    fprintf(stderr, "URL maior que o buffer\n");
@@ -168,8 +189,11 @@ return 0;
 
 /*!
  * \brief Copia todo o header e mais um pedaco do conteudo para uma variavel  
+ * 
  * \param[in] sockfd Descritor do socket
+ * 
  * \param[out] header Variavel que contem o header da resposta do HTTP GET
+ * 
  * \return 0 se for OK
  * \return -1 se der algum erro
  */
@@ -206,8 +230,11 @@ static int get_http_header(char *header, int sockfd)
 /*!
  * \brief Essa funcao le uma linha de um buffer ate encontrar uma nova linha,
  *        escreve ela em um buffer temporario,  e retorna o tamanho dela
+ * 
  * \param[in] buffer Ponteiro para uma posicao de um buffer
+ * 
  * \param[out] buf_tmp Ponteiro para um buffer temporario
+ * 
  * \return buf_len Retorna tamanho do buffer temporario
  * \return -1 se der algum erro
  */
@@ -233,7 +260,9 @@ static int get_line(char *buffer, char *buf_tmp)
 
 /*! 
  * \brief Checa por erros http
+ * 
  * \param[in] header Ponteiro para o inicio do header
+ * 
  * \return 0 se for OK
  * \return -1 se der algum erro
  */
@@ -273,7 +302,9 @@ static int check_http_errors(char *header)
  * \brief Funcao para encontrar o final do header, ele e lido linha a linha ate
  * encontrar uma linha que tem somente uma nova linha (ou carrier seguido
  * de linha)
+ * 
  * \param[in] header Variavel que contem o header
+ *
  * \return 0 se for OK
  * \return 1 se der algum erro
  */
@@ -301,11 +332,14 @@ static int check_header_end(char *header)
 
 /*! 
  * \brief Essa funcao escreve o buffer recebido dentro do arquivo aberto
+ * 
  * \param[in] header Variavel que contem o header e um pedaco do conteudo 
  * \param[in] header_len Variavel que contem o tamanho do header 
  * \param[in] sockfd Descritor do socket
+ * 
  * \param[out] buffer Variavel para qual os dados recebidos serao enviados
  * \param[out] fp Descritor do arquivo aberto 
+ * 
  * \return 0 se for OK
  * \return -1 se der algum erro
  */ 
@@ -329,38 +363,37 @@ static int get_file(char *buffer, char *header, int header_len,
   fclose(fp);
   return 0;
 }
-/*! 
- * \brief Funcao principal que ira realizar as chamadas das funcoes do programa
- * \param[in] argc Numero de parametros recebidos
- * \param[in] argv Vetor com os parametros separados em strings
- * \return 0 se for OK
- * \return -1 se der algum erro
- */
 
 int main(int argc, char *argv[])
 {
   char buffer[BUFSIZE], header[HEADERSIZE];
   int  header_len = 0, sockfd = -1;
   FILE *fp = NULL;
-  struct http_addr_names http_names;
-   
-  if (parse_param(argc, argv[1], &http_names) == -1)
+  struct cli_req_info req_info;
+  
+  //req_info = { 0 };
+  memset(&req_info, 0, sizeof(req_info));
+
+  if (parse_param(argc, argv[1], &req_info) == -1)
     goto error;
   
-  if (get_names(&http_names) == -1)
+  if (get_names(&req_info) == -1)
     goto error;
   
-  if (!(fp = open_file(&http_names, argv[2])))
+  if (!(fp = open_file(&req_info, argv[2])))
   {
-     fprintf(stderr, "File error:%s\n", strerror(errno));
-     goto error;
+    
+    fprintf(stderr, "File error:%s\n%s\n%s\n", strerror(errno),
+              "Usage: dget [URL] [OPTION]", "-f, force overwrite");
+    goto error;
   }  
 
-  sockfd = socket_connect(&http_names);
+  sockfd = socket_connect(&req_info);
   if (sockfd > 0)
-  {  if (send_http_get(&http_names, sockfd) == -1)
+  {  if (send_http_get(&req_info, sockfd) == -1)
        goto error;
   }
+
   else
     goto error;
   
@@ -383,7 +416,7 @@ error:
     if (sockfd)
       close(sockfd);
     if (fp)
-      if (remove(http_names.filename) != 0)
+      if (unlink(req_info.filename) != 0)
         fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
 return -1;
 }
