@@ -314,7 +314,7 @@ static int check_header_end(char *header)
 {
   int num_bytes_header = 0;
   char buf_tmp[HEADERSIZE];      
-  char *header_aux;   
+  char *header_aux, *aux;   
   
   memset(buf_tmp, 0, HEADERSIZE);
   header_aux = header;
@@ -326,8 +326,11 @@ static int check_header_end(char *header)
     if (num_bytes_header == -1)
       return -1;                              
   }
+
+  //aux = strstr(header_aux, "\r\n\r\n");
+ // return header - aux - 4;
   
-  return num_bytes_header;
+ // return num_bytes_header;
 }
 
 /*! 
