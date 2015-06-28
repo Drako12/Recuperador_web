@@ -306,28 +306,42 @@ static int check_http_errors(char *header)
  * 
  * \param[in] header Variavel que contem o header
  *
- * \return 0 se for OK
+ * \return num_bytes_header se for OK
  * \return 1 se der algum erro
  */
 
 static int check_header_end(char *header)
 {
   int num_bytes_header = 0;
-  char buf_tmp[HEADERSIZE];      
+  //char buf_tmp[HEADERSIZE];      
   char *header_aux;   
   
-  memset(buf_tmp, 0, HEADERSIZE);
-  header_aux = header;
+ // memset(buf_tmp, 0, HEADERSIZE);
+ // header_aux = header;
   
-  while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
+ // while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
+ // {
+ //   num_bytes_header = get_line(header_aux + num_bytes_header, buf_tmp) +
+ //                               num_bytes_header;
+ //   if (num_bytes_header == -1)
+ //     return -1;                              
+ // }
+  
+  if ((header_aux =  strstr(header,"\r\n\r\n")) != NULL)
   {
-    num_bytes_header = get_line(header_aux + num_bytes_header, buf_tmp) +
-                                num_bytes_header;
-    if (num_bytes_header == -1)
-      return -1;                              
+    num_bytes_header = header_aux - header + 4;
+    return num_bytes_header;
   }
   
-  return num_bytes_header;
+  if ((header_aux =  strstr(header,"\n\n")) != NULL)
+  {
+    num_bytes_header = header_aux - header + 2;
+    return num_bytes_header;
+  } 
+
+  return -1;
+   
+  //return num_bytes_header;
 }
 
 /*! 
@@ -387,7 +401,7 @@ int main(int argc, char *argv[])
     goto error;
   }  
 
-  if (!(sockfd = socket_connect(req_info.host)) > 0)
+  if ((sockfd = socket_connect(req_info.host)) < 0)
     goto error;
   
   if (send_http_get(&req_info, sockfd) == -1)
