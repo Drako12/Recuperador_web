@@ -10,27 +10,39 @@
  * \brief Realiza um parse dos parametros recebidos no terminal e remove o
  *        http:// se estiver presente.
  *
- * \param[in] argc Numero de parametros do comando
+ * \param[in] n_params Numero de parametros do comando
  * \param[in] url Segundo parametro do comando
- * 
+ * \param[in] flag Terceiro parametro do comando
  * \param[out] req_info Estrutura que ira receber a URL completa
  * 
  * \return 0 se for OK 
  * \return -1 se der algum erro
  */
 
-static int parse_param(int n_params, const char *url,
+static int parse_param(int n_params, const char *url, const char *flag,
                        struct cli_req_info *req_info)
 {
   char *url_s = NULL;
+  int url_size = 0;
 
   if (n_params > 3 || n_params == 0)
   {
     fprintf(stderr, "Bad parameters\nUsage: dget [URL] [OPTION]\n"
-            "-f, force overwrite");
+            "-f, force overwrite\n");
     return -1;
   }
   
+  if(flag)
+  {
+    strncpy(req_info->flag, flag, MAX_FLAG_LEN);
+    if (strncmp(req_info->flag, "-f", MAX_FLAG_LEN) != 0)
+    {
+      fprintf(stderr,"Bad parameter\n Usage: dget [URL] [OPTION]\n"
+              "-f, force overwrite\n");
+      return -1;
+    }
+  }
+
   url_s = strdup(url);
   if (url_s == NULL)
   {
@@ -38,7 +50,9 @@ static int parse_param(int n_params, const char *url,
     return -1;    
   }
 
-  if(strlen(url_s) > MAX_URI_LEN)
+  url_size = strlen(url_s);
+
+  if(url_size > MAX_URI_LEN)
   {
     fprintf(stderr, "Bad URL\n");
     return -1;
@@ -67,7 +81,9 @@ static int parse_param(int n_params, const char *url,
 
 static int get_names(struct cli_req_info *req_info)
 {
-  if (sscanf(req_info->uri,"%[^/]%s", req_info->host, req_info->path) != 2)
+ // int host_size = 0;
+  if (sscanf(req_info->uri, "%"RESOLVE(MAX_HOST_LEN)"[^/]%"RESOLVE(PATH_MAX)"s"
+             , req_info->host, req_info->path) != 2)
   {
     fprintf(stderr, "Bad URL:%s\n", strerror(errno));
     return -1;
@@ -76,32 +92,33 @@ static int get_names(struct cli_req_info *req_info)
     strncpy(req_info->filename, strrchr(req_info->path, '/') + 1, NAME_MAX);
  
   return 0;
+
+ /* strncpy(req_info->filename, strrchr(req_info->uri, '/') + 1, NAME_MAX);
+  strncpy(req_info->path, strchr(req_info->uri, '/'), PATH_MAX);
+  host_size = strlen(req_info->uri) - strlen(req_info->path);
+  if(host_size < MAX_HOST_LEN)
+  strncpy(req_info->host, req_info->uri, host_size);
+  else
+    return -1;*/
+return 0;
+
 }
 
 /*!
  * \brief Cria o arquivo de acordo com o filename e flag
  *
- * \param[in] req_info Estrutura com o nome do arquivo
- * \param[in] flag Opcao para forcar a sobreescrita do arquivo
- * 
+ * \param[in] req_info Estrutura com o nome do arquivo e a flag que forca a
+ * sobreescrita do arquivo
+ *  
  * \return Ponteiro do arquivo aberto
  */
 
-static FILE *open_file(struct cli_req_info *req_info, char *flag)
+static FILE *open_file(const struct cli_req_info *req_info)
 {
   char *filep;
 
-  if (flag)
-  { 
-    if (strcmp(flag, "-f") == 0)
+  if (*req_info->flag)
     filep = "w";
-    else
-    {
-      fprintf(stderr,"Bad parameter\n Usage: dget [URL] [OPTION]\n"
-              "-f, force overwrite");
-      return NULL;
-    }
-  }
   else
     filep = "wx";
  
@@ -188,7 +205,6 @@ return 0;
  * \brief Copia todo o header e mais um pedaco do conteudo para uma variavel  
  * 
  * \param[in] sockfd Descritor do socket
- * 
  * \param[out] header Variavel que contem o header da resposta do HTTP GET
  * 
  * \return 0 se for OK
@@ -200,13 +216,11 @@ static int get_http_header(char *header, int sockfd)
 {
   int num_bytes_header = 0;
   int num_bytes_aux = 0;
-  char *header_aux;
 
-  header_aux = header;
   while (num_bytes_aux < HEADERSIZE - 1)
   {   
-    num_bytes_header = recv(sockfd, header_aux, HEADERSIZE - num_bytes_aux -
-                            1, 0);
+    num_bytes_header = recv(sockfd, header + num_bytes_aux, HEADERSIZE -
+                            num_bytes_aux - 1, 0);
                           
     if (num_bytes_header < 0)
     {
@@ -215,13 +229,15 @@ static int get_http_header(char *header, int sockfd)
     }
 
     if (num_bytes_header == 0)
+    {
+      header[num_bytes_aux] = '\0';  
       break;
+    }
 
-    num_bytes_aux += num_bytes_header;
-    header_aux += num_bytes_header;  
+    num_bytes_aux += num_bytes_header;     
   }
 
-  *header_aux = 0;  
+  header[num_bytes_aux] = '\0';  
 
   return 0;  
 }
@@ -231,7 +247,6 @@ static int get_http_header(char *header, int sockfd)
  *        escreve ela em um buffer temporario,  e retorna o tamanho dela
  * 
  * \param[in] buffer Ponteiro para uma posicao de um buffer
- * 
  * \param[out] buf_tmp Ponteiro para um buffer temporario
  * 
  * \return buf_len Retorna tamanho do buffer temporario
@@ -249,17 +264,17 @@ static int get_line(char *buffer, char *buf_tmp)
   {
     buf_len = end_line - buffer_start + 1;
     strncpy(buf_tmp, buffer, buf_len);
-    buf_tmp[buf_len] = '\0';
+    buf_tmp[buf_len + 1] = '\0';
     return buf_len;
   }
   
-  fprintf(stderr,"Header error");
+  fprintf(stderr, "Header error");
   
   return -1;    
 }
 
 /*! 
- * \brief Checa por erros http
+ * \brief Checa o status http e imprime a mensagem em caso de erro
  * 
  * \param[in] header Ponteiro para o inicio do header
  * 
@@ -277,18 +292,18 @@ static int check_http_errors(char *header)
 
   if (get_line(header, buf_tmp) != -1)   
   {   
-   //ret = sscanf(buf_tmp, "%*[^ ]"RESOLVE_D(LINE_MAX)" "RESOLVE_S(MAX_HTTP_STATUS_LEN), &status, http_status);
-   ret = sscanf(buf_tmp, "%*[^ ] %d %s", &status, http_status);   
+   ret = sscanf(buf_tmp, "%*[^ ] %d %"RESOLVE(MAX_HTTP_STATUS_LEN)"[^\r\n]",
+                &status, http_status);   
     if (ret != 2)
     {
-      fprintf(stderr, "Header error");
+      fprintf(stderr, "Header error\n");
       return -1;
     }
     else
     {
-      if (status < 200 && status > 299)
+      if (status < 200 || status > 299)
       {
-        fprintf(stderr,"Header:%s",http_status);
+        fprintf(stderr, "Error: %d %s\n", status, http_status);
         return -1;
       }
     }
@@ -300,33 +315,19 @@ static int check_http_errors(char *header)
 }
 
 /*!
- * \brief Funcao para encontrar o final do header, ele e lido linha a linha ate
- * encontrar uma linha que tem somente uma nova linha (ou carrier seguido
- * de linha)
- * 
+ * \brief Funcao para encontrar o final do header, e feito uma procura pelo
+ * padrao de final de header (\r\n\r\n ou \n\n) utilizando a funcao strstr
+ *  
  * \param[in] header Variavel que contem o header
  *
  * \return num_bytes_header se for OK
- * \return 1 se der algum erro
+ * \return -1 se der algum erro
  */
 
 static int check_header_end(char *header)
 {
   int num_bytes_header = 0;
   char *header_aux;   
-  //char buf_tmp[HEADERSIZE];      
- 
- // memset(buf_tmp, 0, HEADERSIZE);
- // header_aux = header;
-  
- // while (memcmp(buf_tmp,"\r\n", 2) != 0 && memcmp(buf_tmp, "\n", 1) != 0)
- // {
- //   num_bytes_header = get_line(header_aux + num_bytes_header, buf_tmp) +
- //                               num_bytes_header;
- //   if (num_bytes_header == -1)
- //     return -1;                              
- // }
- //return num_bytes_header;
   
   if ((header_aux =  strstr(header,"\r\n\r\n")) != NULL)
   {
@@ -372,7 +373,7 @@ static int get_file(char *buffer, char *header, int header_len,
       return -1;
     }        
     fwrite(buffer, 1, recv_data, fp);
-  } while(recv_data > 0); 
+  } while (recv_data > 0); 
   
   fclose(fp);
   return 0;
@@ -384,21 +385,21 @@ int main(int argc, char *argv[])
   int  header_len = 0, sockfd = -1;
   FILE *fp = NULL;
   struct cli_req_info req_info;
-  
-  //req_info = { 0 };
+    
   memset(&req_info, 0, sizeof(req_info));
   memset(buffer, 0, sizeof(buffer));
+  memset(header, 0, sizeof(header));
 
-  if (parse_param(argc, argv[1], &req_info) == -1)
+  if (parse_param(argc, argv[1], argv[2], &req_info) == -1)
     goto error;
   
   if (get_names(&req_info) == -1)
     goto error;
   
-  if (!(fp = open_file(&req_info, argv[2])))
+  if (!(fp = open_file(&req_info)))
   {    
     fprintf(stderr, "File error:%s\nUsage: dget [URL] [OPTION]\n"
-            "-f, force overwrite", strerror(errno));
+            "-f, force overwrite\n", strerror(errno));
     goto error;
   }  
 
@@ -426,8 +427,7 @@ int main(int argc, char *argv[])
 error:
     if (sockfd)
       close(sockfd);
-    if (fp)
-      if (unlink(req_info.filename) != 0)
+    if ((fp && unlink(req_info.filename)) != 0)
         fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
 return -1;
 }
