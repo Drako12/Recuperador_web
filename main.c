@@ -92,16 +92,6 @@ static int get_names(struct cli_req_info *req_info)
     strncpy(req_info->filename, strrchr(req_info->path, '/') + 1, NAME_MAX);
  
   return 0;
-
- /* strncpy(req_info->filename, strrchr(req_info->uri, '/') + 1, NAME_MAX);
-  strncpy(req_info->path, strchr(req_info->uri, '/'), PATH_MAX);
-  host_size = strlen(req_info->uri) - strlen(req_info->path);
-  if(host_size < MAX_HOST_LEN)
-  strncpy(req_info->host, req_info->uri, host_size);
-  else
-    return -1;*/
-return 0;
-
 }
 
 /*!
@@ -229,16 +219,11 @@ static int get_http_header(char *header, int sockfd)
     }
 
     if (num_bytes_header == 0)
-    {
-      header[num_bytes_aux] = '\0';  
       break;
-    }
+    
 
     num_bytes_aux += num_bytes_header;     
   }
-
-  header[num_bytes_aux] = '\0';  
-
   return 0;  
 }
 
@@ -342,8 +327,6 @@ static int check_header_end(char *header)
   } 
 
   return -1;
-   
-
 }
 
 /*! 
