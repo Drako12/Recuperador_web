@@ -22,7 +22,6 @@
 static int parse_param(int n_params, const char *url, const char *flag,
                        struct cli_req_info *req_info)
 {
-  char *url_s = NULL;
   int url_size = 0;
 
   if (n_params > 3 || n_params == 0)
@@ -43,27 +42,17 @@ static int parse_param(int n_params, const char *url, const char *flag,
     }
   }
 
-  url_s = strdup(url);
-  if (url_s == NULL)
-  {
-    fprintf(stderr, "Error allocating memory:\n%s", strerror(errno));
-    return -1;    
-  }
-
-  url_size = strlen(url_s);
-
+  url_size = strlen(url);
   if(url_size > MAX_URI_LEN)
   {
     fprintf(stderr, "Bad URL\n");
     return -1;
   }
     
-  if (strncmp(url_s, "http://", 7) == 0)
-    strncpy(req_info->uri, url_s + 7, MAX_URI_LEN);
+  if (strncmp(url, "http://", 7) == 0)
+    strncpy(req_info->uri, url + 7, MAX_URI_LEN);
   else
-    strncpy(req_info->uri, url_s, MAX_URI_LEN);
-  
-  free(url_s);
+    strncpy(req_info->uri, url, MAX_URI_LEN);
   
   return 0;
 }
@@ -80,9 +69,8 @@ static int parse_param(int n_params, const char *url, const char *flag,
  */
 
 static int get_names(struct cli_req_info *req_info)
-{
- // int host_size = 0;
-  if (sscanf(req_info->uri, "%"RESOLVE(MAX_HOST_LEN)"[^/]%"RESOLVE(PATH_MAX)"s"
+{ 
+  if (sscanf(req_info->uri, "%"STR_HOST"[^/]%"STR_PATH"s"
              , req_info->host, req_info->path) != 2)
   {
     fprintf(stderr, "Bad URL:%s\n", strerror(errno));
@@ -188,7 +176,7 @@ static int send_http_get(const struct cli_req_info *req_info, int sockfd)
     fprintf(stderr, "Send error:%s\n", strerror(errno));
     return -1;
   }
-return 0;  
+  return 0;  
 }
 
 /*!
@@ -202,14 +190,13 @@ return 0;
  */
 
 
-static int get_http_header(char *header, int sockfd)
+static int get_http_header(char *header, int sockfd, int header_size)
 {
   int num_bytes_header = 0;
   int num_bytes_aux = 0;
-
-  while (num_bytes_aux < HEADERSIZE - 1)
-  {   
-    num_bytes_header = recv(sockfd, header + num_bytes_aux, HEADERSIZE -
+  while (num_bytes_aux  < header_size - 1)
+  {    
+    num_bytes_header = recv(sockfd, header + num_bytes_aux, header_size -
                             num_bytes_aux - 1, 0);
                           
     if (num_bytes_header < 0)
@@ -220,8 +207,7 @@ static int get_http_header(char *header, int sockfd)
 
     if (num_bytes_header == 0)
       break;
-    
-
+   
     num_bytes_aux += num_bytes_header;     
   }
   return 0;  
@@ -238,24 +224,29 @@ static int get_http_header(char *header, int sockfd)
  * \return -1 se der algum erro
  */
 
-static int get_line(char *buffer, char *buf_tmp)
+static int get_line(char *buffer, char *buf_tmp, int buf_array_len)
 {
   char *end_line, *buffer_start;
   int buf_len = 0;
   
   buffer_start = buffer;
-  end_line = strchr(buffer, '\n');
-  if (end_line != NULL)
+  end_line = strchr(buffer, '\n');  
+  if (end_line == NULL)
   {
-    buf_len = end_line - buffer_start + 1;
-    strncpy(buf_tmp, buffer, buf_len);
-    buf_tmp[buf_len + 1] = '\0';
-    return buf_len;
+    fprintf(stderr, "Header error");
+    return -1;
   }
   
-  fprintf(stderr, "Header error");
+  buf_len = end_line - buffer_start + 1;
+  if(buf_len >= buf_array_len)
+  {
+    fprintf(stderr, "Header error");
+    return -1;    
+  }
   
-  return -1;    
+  strncpy(buf_tmp, buffer, buf_len);
+  buf_tmp[buf_len + 1] = '\0';
+  return buf_len;     
 }
 
 /*! 
@@ -275,27 +266,22 @@ static int check_http_errors(char *header)
   
   memset(buf_tmp, 0, sizeof(buf_tmp));
 
-  if (get_line(header, buf_tmp) != -1)   
-  {   
-   ret = sscanf(buf_tmp, "%*[^ ] %d %"RESOLVE(MAX_HTTP_STATUS_LEN)"[^\r\n]",
-                &status, http_status);   
-    if (ret != 2)
-    {
-      fprintf(stderr, "Header error\n");
-      return -1;
-    }
-    else
-    {
-      if (status < 200 || status > 299)
-      {
-        fprintf(stderr, "Error: %d %s\n", status, http_status);
-        return -1;
-      }
-    }
-  }
-  else
+  if (get_line(header, buf_tmp, ARRAY_LEN(buf_tmp)) == -1)
     return -1;
   
+  ret = sscanf(buf_tmp, "%*[^ ] %d %"STR_STATUS"[^\r\n]", &status,
+               http_status);   
+  if (ret != 2)
+  {
+    fprintf(stderr, "Header error\n");
+    return -1;
+  }
+  
+  if (status < 200 || status > 299)
+  {
+    fprintf(stderr, "Error: %d %s\n", status, http_status);
+      return -1;
+  }     
   return 0;
 }
 
@@ -343,22 +329,27 @@ static int check_header_end(char *header)
  */ 
 
 static int get_file(char *buffer, char *header, int header_len,
-                    FILE *fp, int sockfd)
+                    FILE *fp, int sockfd, int buffer_len, int h_array_len)
 { 
-  int recv_data = 0;
-  fwrite(header + header_len, 1, HEADERSIZE - header_len - 1, fp);
-  do
-  {    
-    recv_data = recv(sockfd, buffer, BUFSIZE, 0);
-    if (recv_data < 0)
-    {
-      fprintf(stderr, "Recv error:%s\n", strerror(errno));
-      return -1;
-    }        
-    fwrite(buffer, 1, recv_data, fp);
-  } while (recv_data > 0); 
+  int nwritten = 0, recv_data = 0;
+
+  fwrite(header + header_len, 1, h_array_len - header_len - 1, fp);
+
+  while ((recv_data = recv(sockfd, buffer, buffer_len, 0)) > 0)
+    nwritten = fwrite(buffer, 1, recv_data, fp);
   
-  fclose(fp);
+  if(nwritten != recv_data)
+  {
+    fprintf(stderr, "Write error:%s\n", strerror(errno));
+    return -1;
+  }
+  
+  if (recv_data < 0)
+  {
+    fprintf(stderr, "Recv error:%s\n", strerror(errno));
+    return -1;
+  }
+
   return 0;
 }
 
@@ -392,7 +383,7 @@ int main(int argc, char *argv[])
   if (send_http_get(&req_info, sockfd) == -1)
     goto error;
     
-  if (get_http_header(header, sockfd) == -1)
+  if (get_http_header(header, sockfd, ARRAY_LEN(header)) == -1)
     goto error;
   
   if (check_http_errors(header) == -1)
@@ -401,18 +392,22 @@ int main(int argc, char *argv[])
   if ((header_len = check_header_end(header)) == -1)
     goto error;
   
-  if (get_file(buffer, header, header_len, fp, sockfd) == -1)
+  if (get_file(buffer, header, header_len, fp, sockfd,
+               ARRAY_LEN(buffer), ARRAY_LEN(header)) == -1)
     goto error;
   
   close(sockfd);
+  fclose(fp);
   return 0;
       
-error:
+error:    
     if (sockfd)
       close(sockfd);
     if ((fp && unlink(req_info.filename)) != 0)
-        fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
-return -1;
+      fprintf(stderr,"Unable to delete file:%s\n", strerror(errno));
+    else
+      fclose(fp);
+  return -1;
 }
 
 

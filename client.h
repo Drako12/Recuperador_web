@@ -19,12 +19,16 @@
 #define HEADERSIZE BUFSIZ
 #define MAX_HOST_LEN 256
 #define MAX_URI_LEN 1024
-#define MAX_HTTP_STATUS_LEN 64
+#define MAX_HTTP_STATUS_LEN 64 
 #define MAX_HTTP_GET_LEN 1024
 #define HTTP_PORT "80"
 #define MAX_FLAG_LEN 4
 #define FORMAT(S)
 #define RESOLVE(S) FORMAT(S)
+#define STR_STATUS FORMAT(MAX_HTTP_STATUS_LEN)
+#define STR_HOST FORMAT(MAX_HOST_LEN)
+#define STR_PATH FORMAT(PATH_MAX)
+#define ARRAY_LEN(a) sizeof(a)/sizeof(*a)
 
 struct cli_req_info 
 {
@@ -33,7 +37,6 @@ struct cli_req_info
   char path[PATH_MAX];
   char filename[NAME_MAX];
   char flag[MAX_FLAG_LEN];    
-
 };
 
 
