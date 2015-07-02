@@ -194,6 +194,7 @@ static int get_http_header(char *header, int sockfd, int header_size)
 {
   int num_bytes_header = 0;
   int num_bytes_aux = 0;
+
   while (num_bytes_aux  < header_size - 1)
   {    
     num_bytes_header = recv(sockfd, header + num_bytes_aux, header_size -
@@ -338,7 +339,7 @@ static int get_file(char *buffer, char *header, int header_len,
   while ((recv_data = recv(sockfd, buffer, buffer_len, 0)) > 0)
     nwritten = fwrite(buffer, 1, recv_data, fp);
   
-  if(nwritten != recv_data)
+  if(nwritten != recv_data && recv_data != 0)
   {
     fprintf(stderr, "Write error:%s\n", strerror(errno));
     return -1;
